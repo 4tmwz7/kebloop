@@ -20,6 +20,41 @@ final class SearchTests: XCTestCase {
         XCTAssertEqual(results.map(\.id), ["safari", "preview", "fuzzy"])
     }
 
+    func testExactAliasOutranksExactApplicationNameEvenWithHighUsage() {
+        let results = search.ranked(
+            query: "terminal",
+            entries: [
+                AppSearchEntry(id: "terminal", name: "Terminal", path: "/System/Applications/Utilities/Terminal.app"),
+                AppSearchEntry(id: "ghostty", name: "Ghostty", path: "/Applications/Ghostty.app", aliases: ["terminal"])
+            ],
+            usage: ["terminal": 50_000]
+        )
+
+        XCTAssertEqual(results.map(\.id), ["ghostty", "terminal"])
+    }
+
+    func testAliasPrefixRanksBelowExactNameAndAboveNamePrefix() {
+        let results = search.ranked(
+            query: "term",
+            entries: [
+                AppSearchEntry(id: "alias", name: "Ghostty", path: "/Applications/Ghostty.app", aliases: ["terminal"]),
+                entry("exact", "Term"),
+                entry("prefix", "Terminal Utility")
+            ]
+        )
+
+        XCTAssertEqual(results.map(\.id), ["exact", "alias", "prefix"])
+    }
+
+    func testAliasesUseCaseAndDiacriticInsensitiveMatching() {
+        let results = search.ranked(
+            query: "resume",
+            entries: [AppSearchEntry(id: "notes", name: "Notes", path: "/Applications/Notes.app", aliases: ["Résumé"]) ]
+        )
+
+        XCTAssertEqual(results.map(\.id), ["notes"])
+    }
+
     func testSearchIgnoresCaseAndDiacritics() {
         let results = search.ranked(
             query: "CAFE",

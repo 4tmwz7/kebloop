@@ -4,11 +4,13 @@ public struct AppSearchEntry: Identifiable, Hashable, Sendable {
     public let id: String
     public let name: String
     public let path: String
+    public let aliases: [String]
 
-    public init(id: String, name: String, path: String) {
+    public init(id: String, name: String, path: String, aliases: [String] = []) {
         self.id = id
         self.name = name
         self.path = path
+        self.aliases = aliases
     }
 }
 
@@ -35,11 +37,15 @@ public struct AppSearch {
         return entries
             .compactMap { entry -> (entry: AppSearchEntry, score: Int, usage: Int)? in
                 let name = Self.normalize(entry.name)
-                guard let matchScore = Self.matchScore(
+                let nameScore = Self.matchScore(
                     query: normalizedQuery,
                     queryWords: queryWords,
                     name: name
-                ) else { return nil }
+                )
+                let aliasScore = entry.aliases.compactMap { alias in
+                    Self.aliasMatchScore(query: normalizedQuery, queryWords: queryWords, alias: alias)
+                }.max()
+                guard let matchScore = [nameScore, aliasScore].compactMap({ $0 }).max() else { return nil }
 
                 return (
                     entry,
@@ -68,6 +74,25 @@ public struct AppSearch {
         }
 
         return subsequenceScore(query: query, name: name)
+    }
+
+    private static func aliasMatchScore(query: String, queryWords: [String], alias: String) -> Int? {
+        let normalizedAlias = normalize(alias)
+        guard !normalizedAlias.isEmpty else { return nil }
+
+        // An exact alias should win over an exact application name. Prefix aliases
+        // remain below exact names and above ordinary name prefixes.
+        if normalizedAlias == query { return 1_400 }
+        if normalizedAlias.hasPrefix(query) {
+            return 1_170 - min(20, normalizedAlias.count - query.count)
+        }
+
+        let aliasWords = words(in: normalizedAlias)
+        if let prefixScore = wordPrefixScore(queryWords: queryWords, nameWords: aliasWords) {
+            return prefixScore + 10
+        }
+
+        return subsequenceScore(query: query, name: normalizedAlias).map { $0 + 15 }
     }
 
     private static func wordPrefixScore(queryWords: [String], nameWords: [String]) -> Int? {

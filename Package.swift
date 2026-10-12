@@ -8,7 +8,8 @@ let package = Package(
     targets: [
         .target(name: "KebloopCore"),
         .executableTarget(name: "Kebloop", dependencies: ["KebloopCore"]),
-        .testTarget(name: "KebloopCoreTests", dependencies: ["KebloopCore"])
+        .testTarget(name: "KebloopCoreTests", dependencies: ["KebloopCore"]),
+        .testTarget(name: "KebloopTests", dependencies: ["Kebloop"])
     ],
     swiftLanguageModes: [.v5]
 )

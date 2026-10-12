@@ -28,17 +28,25 @@ final class Preferences: ObservableObject {
 }
 
 @MainActor
-final class AppController: NSObject, NSApplicationDelegate {
+final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let preferences = Preferences()
     private let index = ApplicationIndex()
     private let hotkey = HotkeyService()
+    private let quicklinks = QuicklinkStore()
+    private let clipboard = ClipboardHistoryStore()
+    private let aliases = AppAliasStore()
+    private var shortcuts: AppShortcutStore!
+    private var emojiPicker: EmojiPickerController?
     private var launcher: LauncherPanelController!
     private var statusItem: NSStatusItem!
     private var settings: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        launcher = LauncherPanelController(index: index)
+        shortcuts = AppShortcutStore(index: index, hotkey: hotkey)
+        configureMenus()
+        launcher = LauncherPanelController(index: index, quicklinks: quicklinks, clipboard: clipboard, aliases: aliases)
         launcher.onSettings = { [weak self] in self?.showSettings() }
+        launcher.onEmoji = { [weak self] in self?.showEmoji() }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.image = NSImage(systemSymbolName: "command.square", accessibilityDescription: "Kebloop")
         let menu = NSMenu()
@@ -46,65 +54,86 @@ final class AppController: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         menu.addItem(withTitle: "Refresh Applications", action: #selector(refresh), keyEquivalent: "")
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit Kebloop", action: #selector(quit), keyEquivalent: "q")
+        menu.addItem(withTitle: "Quit Kebloop", action: #selector(quit), keyEquivalent: "")
         for item in menu.items { item.target = self }
         statusItem.menu = menu
         hotkey.onPress = { [weak self] in self?.launcher.toggle() }
         preferences.applyShortcut = { [weak self] in self?.registerShortcut() }
         registerShortcut()
         index.refresh()
+        if !UserDefaults.standard.bool(forKey: "automaticLoginConfigured") {
+            preferences.setLogin(true)
+            if preferences.loginEnabled { UserDefaults.standard.set(true, forKey: "automaticLoginConfigured") }
+        }
         // A normal manual launch opens the panel. Login launches stay in the menu bar.
         let launchedAtLogin = NSAppleEventManager.shared().currentAppleEvent?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == type(general: "logi")
         if !launchedAtLogin { launcher.show() }
     }
+    private func configureMenus() {
+        let bar = NSMenu()
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu()
+        let settingsItem = appMenu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        appMenu.addItem(.separator())
+        let hideItem = appMenu.addItem(withTitle: "Hide Kebloop", action: #selector(hideInterface), keyEquivalent: "q")
+        hideItem.target = self
+        let quitItem = appMenu.addItem(withTitle: "Quit Kebloop", action: #selector(quit), keyEquivalent: "")
+        quitItem.target = self
+        appItem.submenu = appMenu
+        bar.addItem(appItem)
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        for (title, selector, key) in [("Undo", "undo:", "z"), ("Redo", "redo:", "Z"),
+                                       ("Cut", "cut:", "x"), ("Copy", "copy:", "c"),
+                                       ("Paste", "paste:", "v"), ("Select All", "selectAll:", "a")] {
+            let item = editMenu.addItem(withTitle: title, action: Selector(selector), keyEquivalent: key)
+            item.keyEquivalentModifierMask = key == "Z" ? [.command, .shift] : .command
+        }
+        editItem.submenu = editMenu
+        bar.addItem(editItem)
+        NSApp.mainMenu = bar
+    }
+    func windowWillClose(_ notification: Notification) { shortcuts?.resume() }
     private func type(general: String) -> UInt32 { general.utf8.reduce(0) { ($0 << 8) | UInt32($1) } }
     private func registerShortcut() {
+        shortcuts?.suspend()
         preferences.shortcutError = hotkey.register(preferences.shortcut) ? nil : "This shortcut is unavailable. Choose another shortcut."
+        shortcuts?.resume()
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         launcher.show()
         return false
     }
+    private func showEmoji() {
+        launcher.dismiss(restoreFocus: false)
+        if emojiPicker == nil {
+            emojiPicker = EmojiPickerController(onCopy: { [weak self] in self?.launcher.restorePreviousFocus() })
+        }
+        emojiPicker?.show()
+    }
     @objc private func openLauncher() { launcher.show() }
     @objc private func refresh() { index.refresh() }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+    @objc private func hideInterface() {
+        emojiPicker?.dismiss()
+        settings?.orderOut(nil)
+        launcher.dismiss()
+    }
     @objc private func quit() { NSApp.terminate(nil) }
     @objc func showSettings() {
         launcher.dismiss(restoreFocus: false)
         if settings == nil {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 330), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 650, height: 520), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
             window.title = "Kebloop Settings"
+            window.minSize = NSSize(width: 600, height: 480)
             window.isReleasedWhenClosed = false
-            window.contentView = NSHostingView(rootView: SettingsView(preferences: preferences))
+            window.delegate = self
+            window.contentView = NSHostingView(rootView: SettingsView(preferences: preferences, index: index, quicklinks: quicklinks, shortcuts: shortcuts, aliases: aliases, clipboard: clipboard))
             window.center()
             settings = window
         }
         NSApp.activate(ignoringOtherApps: true)
         settings?.makeKeyAndOrderFront(nil)
-    }
-}
-
-private struct SettingsView: View {
-    @ObservedObject var preferences: Preferences
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            HStack(spacing: 12) {
-                Image(systemName: "command.square.fill").font(.system(size: 36)).foregroundStyle(.secondary)
-                VStack(alignment: .leading) {
-                    Text("Kebloop").font(.title2.weight(.semibold))
-                    Text("Apps and answers. One shortcut away.").foregroundStyle(.secondary)
-                }
-            }
-            Picker("Open launcher", selection: $preferences.shortcutID) {
-                ForEach(Shortcut.choices) { Text($0.label).tag($0.id) }
-            }.onChange(of: preferences.shortcutID) { _, _ in preferences.saveShortcut() }
-            Text("⌘ Space may conflict with Spotlight or Raycast. Change their shortcut before assigning it here.")
-                .font(.caption).foregroundStyle(.secondary)
-            if let error = preferences.shortcutError { Text(error).foregroundStyle(.red).font(.caption) }
-            Toggle("Launch at login", isOn: Binding(get: { preferences.loginEnabled }, set: { preferences.setLogin($0) }))
-            if let error = preferences.loginError { Text(error).foregroundStyle(.red).font(.caption) }
-            Divider()
-            Text("Type an app name or try 15% of 200. Return opens an app or copies an answer. Escape closes the launcher.")
-                .font(.callout).foregroundStyle(.secondary)
-        }.padding(28).frame(width: 440)
     }
 }
