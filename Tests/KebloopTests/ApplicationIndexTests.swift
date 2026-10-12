@@ -3,6 +3,16 @@ import XCTest
 @testable import Kebloop
 
 final class ApplicationIndexTests: XCTestCase {
+    @MainActor
+    func testRequestedNativeIconRemainsAvailableInCache() async throws {
+        let index = ApplicationIndex()
+        let app = IndexedApplication(name: "System Settings", path: "/System/Applications/System Settings.app")
+        _ = index.icon(for: app)
+        try await Task.sleep(for: .milliseconds(100))
+        let cached = try XCTUnwrap(index.icon(for: app), "A loaded native icon must not be immediately evicted")
+        XCTAssertTrue(index.icon(for: app) === cached)
+    }
+
     func testRefreshDueRequiresMissingOrExpiredCompletionTimestamp() {
         let now = Date()
         let interval: TimeInterval = 5 * 60

@@ -27,7 +27,6 @@ final class ApplicationIndex: ObservableObject {
 
     init() {
         iconCache.countLimit = 128
-        iconCache.totalCostLimit = 48 * 1024 * 1024
         applications = Self.loadCache()
         warmIcons(for: applications)
         refresh()
@@ -112,7 +111,10 @@ final class ApplicationIndex: ObservableObject {
         // can fail for lazily loaded icons and discards newer system icon variants.
         // AppKit image lookup and use both stay on the main actor.
         let image = NSWorkspace.shared.icon(forFile: path)
-        iconCache.setObject(image, forKey: key, cost: Self.iconCost(image))
+        // Workspace icons expose many lazy representations. Summing their pixel
+        // sizes can exceed a cost budget for one icon and immediately evict it.
+        // Bound the number of native images without forcing representation lookup.
+        iconCache.setObject(image, forKey: key)
         return true
     }
 
@@ -132,14 +134,6 @@ final class ApplicationIndex: ObservableObject {
                 }
             }
         }
-    }
-
-    private nonisolated static func iconCost(_ image: NSImage) -> Int {
-        let representationCost = image.representations.reduce(into: 0) { total, representation in
-            total += max(1, representation.pixelsWide) * max(1, representation.pixelsHigh) * 4
-        }
-        let logicalSizeCost = Int(image.size.width * image.size.height * 4)
-        return max(representationCost, logicalSizeCost)
     }
 
     func launch(_ app: IndexedApplication, completion: @escaping (Error?) -> Void) {

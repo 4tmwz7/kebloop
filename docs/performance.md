@@ -16,7 +16,7 @@ Optimizations in this change:
 - Hidden panels skip reactive ranking/rendering; unchanged file-search publications and irrelevant status renders are suppressed.
 - Search normalizes names once per candidate and avoids temporary fuzzy-score arrays.
 - Opening the launcher uses a five-minute app-index freshness window; explicit refresh still scans immediately.
-- Icons have count/cost cache limits and only the first 32 applications are warmed. Other icons load on demand.
+- Icons have a count cache limit and only the first 32 applications are warmed. Other icons load on demand.
 - File exclusions reuse constants and avoid repeated Foundation path conversions for canonical paths.
 - Clipboard polling stops while disabled. The serial persistence writer retains only one active and one latest pending snapshot, avoiding a backlog of full-history saves. A controlled 500-update burst test produces two writes rather than 501; clear/remove remain the final saved state.
 
@@ -42,3 +42,7 @@ Median of three runs per version (p95 rows are the median of each run’s p95):
 The measured workload used 81% less CPU time and 25% less peak resident memory. Navigation improved by 86.1×. Query p95 changed only modestly. Idle CPU varied between runs and did not improve; no idle-CPU reduction is claimed. Startup is sensitive to disk cache and desktop load. These local measurements are not guarantees for other Macs or large clipboard/quicklink collections.
 
 The standalone visibility benchmark’s repeated baseline runs took 2,111–2,158 ms versus 639–647 ms after optimization for 102,400 checks (about 3.3× faster). The final profiling script measured 625 ms. Its process RSS was approximately 69.2 MB before and 7.3 MB after; this is isolated allocation pressure, not a measurement of the app.
+
+The initial 48 MiB icon cost budget incorrectly counted all native image representations and could immediately evict a single icon. It was removed after the missing-icon regression was reproduced. The cache keeps its 128-image count limit and 32-image warmup; the measurements above describe the earlier profiling revision and should be re-run for the icon fix.
+
+A [single follow-up run with icons restored](performance/icon-fix-results.json) measured 126.25 MiB peak process RSS, 1.245 s workload CPU, and 0.077 ms median navigation. Query median was 5.570 ms and p95 12.258 ms; the original query-latency improvement should not be assumed with icons restored.
