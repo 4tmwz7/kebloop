@@ -9,6 +9,7 @@ struct SettingsView: View {
     @ObservedObject var shortcuts: AppShortcutStore
     @ObservedObject var aliases: AppAliasStore
     @ObservedObject var clipboard: ClipboardHistoryStore
+    @ObservedObject var ai: AIHandoffService
     @State private var editingID: String?
     @State private var linkName = ""
     @State private var linkTarget = ""
@@ -16,6 +17,7 @@ struct SettingsView: View {
     @State private var appQuery = ""
     @State private var recordingApp: IndexedApplication?
     @State private var clearConfirmation = false
+    @State private var siriTrusted = false
 
     var body: some View {
         TabView {
@@ -27,6 +29,10 @@ struct SettingsView: View {
         }
         .padding(12)
         .frame(minWidth: 600, minHeight: 430)
+        .onAppear { siriTrusted = SiriPromptSender.isTrusted }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            siriTrusted = SiriPromptSender.isTrusted
+        }
         .onDisappear { stopRecording() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { _ in
             if recordingApp != nil { stopRecording() }
@@ -47,6 +53,24 @@ struct SettingsView: View {
             Text("⌘ Space may conflict with Spotlight or Raycast.").font(.caption).foregroundStyle(.secondary)
             Toggle("Launch at login", isOn: Binding(get: { preferences.loginEnabled }, set: { preferences.setLogin($0) }))
             if let error = preferences.loginError { Text(error).foregroundStyle(.red).font(.caption) }
+            Picker("AI provider", selection: $ai.provider) {
+                ForEach(AIProvider.allCases) { provider in Text(provider.settingsTitle).tag(provider) }
+            }
+            Text(ai.provider.explanation).font(.caption).foregroundStyle(.secondary)
+            Text("Type a query in the launcher, then press Tab. ChatGPT opens with the query filled in; Siri receives and submits it directly.")
+                .font(.caption).foregroundStyle(.secondary)
+            if ai.provider == .local {
+                if siriTrusted { Text("Siri automation is enabled.").font(.caption).foregroundStyle(.secondary) }
+                else {
+                    Button("Allow Siri Automation…") {
+                        _ = SiriPromptSender.requestPermission()
+                        siriTrusted = SiriPromptSender.isTrusted
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                }
+            }
             Button("Refresh Applications") { index.refresh() }.disabled(index.isRefreshing)
         }.formStyle(.grouped)
     }

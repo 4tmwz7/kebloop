@@ -13,7 +13,7 @@ Requires macOS 14+ and Xcode with the Swift toolchain selected.
 open dist/Kebloop.app
 ```
 
-The script creates an ad-hoc signed release app for the current Mac's architecture. For daily use, copy `dist/Kebloop.app` into `/Applications` and launch that copy before enabling launch at login. This development build is not notarized for public distribution.
+The script creates a release app for the current Mac's architecture, signed with an available Apple Development identity (or ad-hoc if none is available). For daily use, copy `dist/Kebloop.app` into `/Applications` and launch that copy before enabling launch at login. This development build is not notarized for public distribution.
 
 Open `Package.swift` in Xcode to edit/debug, or use `swift build`. Tests: `swift test -c release`.
 
@@ -49,6 +49,16 @@ Within clipboard and quicklink search, Escape or the back button returns to root
 
 **Files:** Filename search runs directly from root search, with apps above files and no separate command to open. A 35 ms debounce starts Spotlight searches; cached query snapshots appear immediately while narrowing or revisiting a query, and new results stream during gathering. Hidden paths, app package contents, `~/Library`, and `node_modules` are excluded. Temporary directories, editor backup/swap files, and partial downloads are also excluded. Git repositories are checked against their `.gitignore` rules before either cached or fresh results appear, including nested rules, negations, worktrees, and configured excludes. This uses local `/usr/bin/git` (provided by Xcode or Command Line Tools); tracked files follow Git’s own ignore semantics. Checks run on a worker queue and rule changes apply on the next search. Exact names and prefixes rank before substring matches, with a boost for Documents/Desktop/Downloads/Public. Results depend on Spotlight indexing and macOS access restrictions. This is filename search, not full-content search; the service keeps up to 40 results per query and root search displays up to 12.
 
+## AI handoff
+
+Settings → General → AI provider selects **OpenAI (ChatGPT)**, **Claude**, or **Local (Siri)**. Type a query in root search and press **Tab**, or click the compact Ask button. Your selection persists across restarts.
+
+ChatGPT opens with your query filled in using a prompt-bearing URL. Claude also receives the query in its URL; signing in may be required. Siri opens a new conversation, fills the native query field, and submits it directly. Enable Siri and Type to Siri, then allow Kebloop under System Settings → Privacy & Security → Device Control and Data Access (Accessibility on older macOS) once. Development builds use an available Apple Development signing identity to preserve grants across rebuilds; set `KEBLOOP_SIGNING_IDENTITY` to choose one. Without a signing identity, the ad-hoc fallback requires renewing the grant after each rebuild. No API keys are required.
+
+Finder is indexed explicitly from CoreServices, alongside the user-facing CoreServices applications, so it appears in app search.
+
+AI handoff text is marked transient so Kebloop does not add it to clipboard history. Blank queries and modified Tab shortcuts keep their normal behavior. If a destination fails to open, the launcher restores the query and shows an error.
+
 ## Calculator
 
 Examples: `2*(3+4)`, `2^10`, `sqrt(81)`, `abs(-2)`, `round(2.6)`, `15% of 200`, `20% off 80`.
@@ -69,7 +79,7 @@ Search matches exact names, prefixes, word prefixes, and fuzzy subsequences, wit
 
 ## Verification
 
-Release XCTest coverage checks matching/ranking, duplicate names, calculator grammar, invalid input, precision, emoji search, quicklink validation/persistence, clipboard limits/deduplication/privacy/persistence, file-query cancellation/caching/ranking, alias priority/persistence, clipboard removal, and Carbon shortcut event routing. A synthetic 1,000-app ranking benchmark averaged approximately 9 ms on the development Mac. This measures ranking, not full input-to-render latency or parity with Raycast.
+Release XCTest coverage checks matching/ranking, duplicate names, calculator grammar, invalid input, precision, emoji search, quicklink validation/persistence, clipboard limits/deduplication/privacy/persistence, file-query cancellation/caching/ranking, alias priority/persistence, clipboard removal, Carbon shortcut event routing, and AI provider persistence/clipboard handoff/target selection. A synthetic 1,000-app ranking benchmark averaged approximately 9 ms on the development Mac. This measures ranking, not full input-to-render latency or parity with Raycast.
 
 Native UI smoke checks covered app/calculator workflows, Settings search, creating and opening a quicklink, recording/copying clipboard entries, finding an indexed file, emoji search/copy, and the app shortcut recorder. App-scoped UI automation does not deliver system-wide Carbon hotkey events, so physical keyboard invocation of global shortcuts needs a manual check; native registration and Carbon event-routing tests pass. Multiple displays, full-screen Spaces, VoiceOver, login startup, and the under-100-ms open target still need broader device testing.
 

@@ -113,10 +113,13 @@ private final class ResultButton: NSButton {
 final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDelegate {
     var onSettings: (() -> Void)?
     var onEmoji: (() -> Void)?
+    var onAI: ((String) -> Void)?
     private let index: ApplicationIndex
     private let quicklinks: QuicklinkStore
     private let clipboard: ClipboardHistoryStore
     private let aliases: AppAliasStore
+    private let ai: AIHandoffService
+    private let aiButton = NSButton(title: "", target: nil, action: nil)
     private let clearHistoryButton = NSButton(title: "Clear…", target: nil, action: nil)
     private var isConfirmingClear = false
     private let files = FileSearchService()
@@ -140,12 +143,13 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
     private var outsideMonitor: Any?
     private var message: String?
 
-    init(index: ApplicationIndex, quicklinks: QuicklinkStore, clipboard: ClipboardHistoryStore, aliases: AppAliasStore) {
+    init(index: ApplicationIndex, quicklinks: QuicklinkStore, clipboard: ClipboardHistoryStore, aliases: AppAliasStore, ai: AIHandoffService) {
         self.index = index
         self.quicklinks = quicklinks
         self.clipboard = clipboard
         self.aliases = aliases
-        panel = LauncherPanel(contentRect: NSRect(x: 0, y: 0, width: 560, height: 360), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        self.ai = ai
+        panel = LauncherPanel(contentRect: NSRect(x: 0, y: 0, width: 560, height: 360), styleMask: [.borderless], backing: .buffered, defer: false)
         super.init()
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
@@ -155,6 +159,11 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.delegate = self
+        NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+            .sink { [weak self] _ in
+                guard let self, self.panel.isVisible else { return }
+                self.focusInput()
+            }.store(in: &subscriptions)
         panel.setAccessibilityLabel("Kebloop launcher")
         buildInterface()
         index.$applications.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.updateResults(preserveSelection: true) }.store(in: &subscriptions)
@@ -176,6 +185,7 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
         aliases.$aliases.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in
             self?.updateResults(preserveSelection: false)
         }.store(in: &subscriptions)
+        ai.$provider.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.render() }.store(in: &subscriptions)
         keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.panel.isKeyWindow else { return event }
             if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "," {
@@ -187,6 +197,14 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
             if self.mode == .clipboard, event.modifierFlags.contains(.command), event.keyCode == 51 {
                 if event.modifierFlags.contains(.shift) { self.confirmClearHistory() }
                 else { self.removeSelectedClipboardItem() }
+                return nil
+            }
+            if event.keyCode == 48,
+               event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+               self.mode == .root,
+               (self.input.currentEditor() as? NSTextView)?.hasMarkedText() != true,
+               !self.input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                self.askAI()
                 return nil
             }
             switch event.keyCode {
@@ -291,8 +309,17 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
         clearHistoryButton.translatesAutoresizingMaskIntoConstraints = false
         clearHistoryButton.setAccessibilityLabel("Clear clipboard history")
         categoryWrapper.addSubview(clearHistoryButton)
+        aiButton.target = self
+        aiButton.action = #selector(askAI)
+        aiButton.isBordered = false
+        aiButton.font = .systemFont(ofSize: 11)
+        aiButton.translatesAutoresizingMaskIntoConstraints = false
+        categoryWrapper.addSubview(aiButton)
         NSLayoutConstraint.activate([
             categoryWrapper.heightAnchor.constraint(equalToConstant: 22),
+            aiButton.trailingAnchor.constraint(equalTo: categoryWrapper.trailingAnchor, constant: -12),
+            aiButton.centerYAnchor.constraint(equalTo: categoryWrapper.centerYAnchor),
+            category.trailingAnchor.constraint(lessThanOrEqualTo: aiButton.leadingAnchor, constant: -8),
             clearHistoryButton.trailingAnchor.constraint(equalTo: categoryWrapper.trailingAnchor, constant: -12),
             clearHistoryButton.centerYAnchor.constraint(equalTo: categoryWrapper.centerYAnchor),
             category.leadingAnchor.constraint(equalTo: categoryWrapper.leadingAnchor, constant: 16),
@@ -323,9 +350,15 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
         stack.addArrangedSubview(line)
     }
 
-    func toggle() { panel.isVisible ? dismiss() : show() }
+    func toggle() {
+        if panel.isVisible && panel.isKeyWindow && NSApp.isActive { dismiss() }
+        else { show() }
+    }
     func show() {
-        if !panel.isVisible { previousApp = NSWorkspace.shared.frontmostApplication }
+        if let frontmost = NSWorkspace.shared.frontmostApplication,
+           frontmost.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+            previousApp = frontmost
+        }
         index.refresh()
         mode = .root
         files.stop()
@@ -339,8 +372,16 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
             let size = panel.frame.size
             panel.setFrameOrigin(NSPoint(x: area.midX - size.width / 2, y: area.maxY - max(110, area.height * 0.2) - size.height))
         }
-        panel.orderFrontRegardless()
-        panel.makeKey()
+        // Activation completes asynchronously. Focus now and again when AppKit
+        // confirms activation, so a foreground editor cannot keep keyboard input.
+        NSApp.activate(ignoringOtherApps: true)
+        focusInput()
+    }
+
+    private func focusInput() {
+        panel.makeKeyAndOrderFront(nil)
+        // Re-entering an active field editor can replace text typed during activation.
+        if let editor = input.currentEditor(), panel.firstResponder === editor { return }
         panel.makeFirstResponder(input)
     }
 
@@ -446,6 +487,10 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
         backButton.isHidden = mode == .root
         clearHistoryButton.isHidden = mode != .clipboard
         clearHistoryButton.isEnabled = !clipboard.items.isEmpty
+        aiButton.isHidden = mode != .root || input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        aiButton.title = "Ask \(ai.provider.title) ⇥"
+        aiButton.setAccessibilityLabel("Open \(ai.provider.title) with your query")
+        aiButton.toolTip = "Send query to \(ai.provider.title) (Tab)"
         if results.isEmpty {
             let label = NSTextField(labelWithString: message ?? emptyMessage)
             label.font = .systemFont(ofSize: 14)
@@ -564,6 +609,19 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
         let height = CGFloat(79) + visibleHeight
         let old = panel.frame
         panel.setFrame(NSRect(x: old.minX, y: old.maxY - height, width: 560, height: height), display: true)
+    }
+
+    @objc private func askAI() {
+        guard mode == .root, !input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        onAI?(input.stringValue)
+    }
+    func showHandoffError(query: String, error: String) {
+        show()
+        input.stringValue = query
+        updateResults()
+        message = error
+        render()
+        panel.makeFirstResponder(input)
     }
 
     private func isClipboardResult(_ result: LauncherResult) -> Bool {

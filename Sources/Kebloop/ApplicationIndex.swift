@@ -44,8 +44,9 @@ final class ApplicationIndex: ObservableObject {
         isRefreshing = true
 
         let roots = Self.applicationRoots
+        let additionalApplications = Self.additionalApplications
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let discovered = Self.scanApplications(in: roots)
+            let discovered = Self.scanApplications(roots: roots, additionalApplications: additionalApplications)
             Self.persistCache(discovered)
 
             DispatchQueue.main.async { [weak self] in
@@ -124,13 +125,38 @@ final class ApplicationIndex: ObservableObject {
             URL(fileURLWithPath: "/Applications", isDirectory: true),
             URL(fileURLWithPath: "/System/Applications", isDirectory: true),
             URL(fileURLWithPath: "/System/Cryptexes/App/System/Applications", isDirectory: true),
+            URL(fileURLWithPath: "/System/Library/CoreServices/Applications", isDirectory: true),
             FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true)
         ]
     }
 
-    private nonisolated static func scanApplications(in roots: [URL]) -> [IndexedApplication] {
+    private nonisolated static var additionalApplications: [URL] {
+        [URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app", isDirectory: true)]
+    }
+
+    nonisolated static func scanApplications(roots: [URL], additionalApplications: [URL]) -> [IndexedApplication] {
         var applicationsByPath: [String: IndexedApplication] = [:]
         let keys: [URLResourceKey] = [.isDirectoryKey]
+
+        func addApplication(at url: URL) {
+            guard url.pathExtension.caseInsensitiveCompare("app") == .orderedSame,
+                  (try? url.resourceValues(forKeys: Set(keys)).isDirectory) == true else { return }
+
+            let standardizedURL = url.standardizedFileURL
+            let path = standardizedURL.path
+            guard applicationsByPath[path] == nil else { return }
+
+            let bundle = Bundle(url: standardizedURL)
+            if bundle?.object(forInfoDictionaryKey: "LSBackgroundOnly") as? Bool == true {
+                return
+            }
+            let displayName = bundle?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+                ?? bundle?.object(forInfoDictionaryKey: "CFBundleName") as? String
+            let name = displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+                .nilIfEmpty ?? standardizedURL.deletingPathExtension().lastPathComponent
+
+            applicationsByPath[path] = IndexedApplication(name: name, path: path)
+        }
 
         for root in roots {
             guard let enumerator = FileManager.default.enumerator(
@@ -143,21 +169,14 @@ final class ApplicationIndex: ObservableObject {
             while let url = enumerator.nextObject() as? URL {
                 guard url.pathExtension.caseInsensitiveCompare("app") == .orderedSame else { continue }
                 enumerator.skipDescendants()
-                guard (try? url.resourceValues(forKeys: Set(keys)).isDirectory) == true else { continue }
-
-                let standardizedURL = url.standardizedFileURL
-                let path = standardizedURL.path
-                let bundle = Bundle(url: standardizedURL)
-                if bundle?.object(forInfoDictionaryKey: "LSBackgroundOnly") as? Bool == true {
-                    continue
-                }
-                let displayName = bundle?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
-                    ?? bundle?.object(forInfoDictionaryKey: "CFBundleName") as? String
-                let name = displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
-                    .nilIfEmpty ?? standardizedURL.deletingPathExtension().lastPathComponent
-
-                applicationsByPath[path] = IndexedApplication(name: name, path: path)
+                addApplication(at: url)
             }
+        }
+
+        // These are explicit user-facing bundles outside the scanned roots.
+        // Add them directly because a FileManager enumerator only finds children.
+        for application in additionalApplications {
+            addApplication(at: application)
         }
 
         return applicationsByPath.values.sorted {

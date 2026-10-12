@@ -35,6 +35,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let quicklinks = QuicklinkStore()
     private let clipboard = ClipboardHistoryStore()
     private let aliases = AppAliasStore()
+    private let ai = AIHandoffService()
     private var shortcuts: AppShortcutStore!
     private var emojiPicker: EmojiPickerController?
     private var launcher: LauncherPanelController!
@@ -44,9 +45,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         shortcuts = AppShortcutStore(index: index, hotkey: hotkey)
         configureMenus()
-        launcher = LauncherPanelController(index: index, quicklinks: quicklinks, clipboard: clipboard, aliases: aliases)
+        launcher = LauncherPanelController(index: index, quicklinks: quicklinks, clipboard: clipboard, aliases: aliases, ai: ai)
         launcher.onSettings = { [weak self] in self?.showSettings() }
         launcher.onEmoji = { [weak self] in self?.showEmoji() }
+        launcher.onAI = { [weak self] query in self?.sendToAI(query) }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.image = NSImage(systemSymbolName: "command.square", accessibilityDescription: "Kebloop")
         let menu = NSMenu()
@@ -105,6 +107,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         launcher.show()
         return false
     }
+    private func sendToAI(_ query: String) {
+        launcher.dismiss(restoreFocus: false)
+        ai.handoff(query) { [weak self] error in
+            if let error { self?.launcher.showHandoffError(query: query, error: error) }
+        }
+    }
     private func showEmoji() {
         launcher.dismiss(restoreFocus: false)
         if emojiPicker == nil {
@@ -129,7 +137,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.minSize = NSSize(width: 600, height: 480)
             window.isReleasedWhenClosed = false
             window.delegate = self
-            window.contentView = NSHostingView(rootView: SettingsView(preferences: preferences, index: index, quicklinks: quicklinks, shortcuts: shortcuts, aliases: aliases, clipboard: clipboard))
+            window.contentView = NSHostingView(rootView: SettingsView(preferences: preferences, index: index, quicklinks: quicklinks, shortcuts: shortcuts, aliases: aliases, clipboard: clipboard, ai: ai))
             window.center()
             settings = window
         }
