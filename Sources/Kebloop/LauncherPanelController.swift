@@ -228,6 +228,10 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
             let glass = NSGlassEffectView()
             glass.style = .regular
             glass.cornerRadius = 20
+            // Clip the window backing as well as the glass effect's rounded shape.
+            glass.wantsLayer = true
+            glass.layer?.cornerRadius = glass.cornerRadius
+            glass.layer?.masksToBounds = true
             if #available(macOS 27.0, *) { glass.effectIsInteractive = true }
             glass.contentView = content
             panel.contentView = glass

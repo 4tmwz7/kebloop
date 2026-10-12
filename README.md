@@ -1,86 +1,92 @@
-<img src="assets/icon.svg" width="64" height="64" alt="">
+<p align="center">
+  <img src="assets/icon.svg" width="80" height="80" alt="Kebloop icon">
+</p>
 
-# Kebloop
+<h1 align="center">Kebloop</h1>
 
-A native macOS launcher for apps, calculations, clipboard history, files, quicklinks, and emoji, built with Swift, AppKit, and SwiftUI. Runs locally without accounts or network services.
+<p align="center">A native macOS launcher for the things you do every day.</p>
 
-## Build and run
+Open apps, find files, run calculations, and reach your clipboard, quicklinks, and emoji from one search field. Built with Swift, AppKit, and SwiftUI, Kebloop lives in the menu bar and opens with **Option-Space**.
 
-Requires macOS 14+ and Xcode with the Swift toolchain selected.
+## Features
+
+- **App search** with fuzzy matching, aliases, and custom app shortcuts.
+- **File search** powered by Spotlight, with Git ignore rules respected.
+- **Calculator** with functions, percentages, and copyable results.
+- **Clipboard history** for up to 200 text entries, with sensitive clipboard types excluded.
+- **Quicklinks** for websites, files, and folders.
+- **Emoji picker** with search, categories, and recents.
+- **AI handoff** to ChatGPT, Claude, or Siri using your existing apps and accounts.
+- **Native appearance** with Liquid Glass on macOS 26+ and popover material on older releases.
+
+Core features run locally without a Kebloop account. AI handoff sends the query to your selected provider; no API key is needed.
+
+## Build and install
+
+**Runtime:** macOS 14 or later. **Build tools:** Xcode 27 or later, including the macOS 27 SDK. The newer SDK is required to compile the interactive glass API; the resulting app still supports macOS 14+.
+
+Select your Xcode toolchain if needed:
+
+```sh
+sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+```
+
+Clone the repository and install:
+
+```sh
+git clone https://github.com/kubamus/kebloop.git
+cd kebloop
+./scripts/install-app.sh
+```
+
+The installer builds a release bundle, verifies its signature, installs it at `/Applications/Kebloop.app`, and opens the installed copy. Run the same command after pulling updates. Your preferences and clipboard history are stored outside the app bundle.
+
+If `/Applications` is not writable, install for your user:
+
+```sh
+./scripts/install-app.sh --destination "$HOME/Applications"
+```
+
+Use `--no-launch` to install without opening the app. To build without installing:
 
 ```sh
 ./scripts/build-app.sh
 open dist/Kebloop.app
 ```
 
-The script creates a release app for the current Mac's architecture, signed with an available Apple Development identity (or ad-hoc if none is available). For daily use, copy `dist/Kebloop.app` into `/Applications` and launch that copy before enabling launch at login. This development build is not notarized for public distribution.
+Builds target your Mac's architecture. The script uses an available Apple Development signing identity, falling back to ad-hoc signing. To choose an identity explicitly:
 
-Open `Package.swift` in Xcode to edit/debug, or use `swift build`. Tests: `swift test -c release`.
+```sh
+KEBLOOP_SIGNING_IDENTITY="Apple Development: Your Name (TEAMID)" ./scripts/install-app.sh
+```
 
-## Using Kebloop
+These are local development builds, not notarized distribution releases. A stable development signature helps macOS retain Siri automation permissions across rebuilds; ad-hoc builds may require granting them again.
 
-- **Option-Space** opens or closes the launcher by default (your saved shortcut is retained).
-- Type an app name, alias, quicklink, or filename. Apps and commands appear immediately; indexed files appear underneath. **Up/Down** selects a result; **Return** opens it or brings it forward.
-- Type math in the same field. Results appear immediately; **Return** copies the answer and closes the launcher.
-- **Escape** or an outside click closes the launcher.
-- **Command-comma** opens settings. The menu-bar icon also opens the launcher, settings, and a manual app refresh.
-- Settings offer Option-Space, Control-Space, Command-Shift-Space, or Command-Space, plus optional launch at login. System shortcuts may need to be reassigned before using the same combination.
+## Getting started
 
-## Commands and settings
-
-Type a command name in the launcher, then press Return:
-
-| Command | Behavior |
+| Action | Shortcut |
 | --- | --- |
-| Clipboard History | Search up to 200 recent text entries; Return copies one. Trash removes an item; Clear… removes all after confirmation. |
-| Quicklinks | Browse saved links. Links also appear directly in root search by name. |
-| Emoji & Symbols | Open the searchable emoji grid with categories and recents; click or Return copies an emoji. Arrow keys navigate. |
-| Open Settings | Configure Kebloop without using its menu-bar icon. |
+| Open or hide the launcher | Option-Space |
+| Select a result | Up / Down |
+| Open a result or copy a calculation | Return |
+| Close the launcher or return from a command | Escape |
+| Open settings | Command-comma |
+| Send a query to your AI provider | Tab |
 
-Within clipboard and quicklink search, Escape or the back button returns to root search. Lists scroll; arrow navigation keeps the selected row visible.
+Type **Clipboard History**, **Quicklinks**, **Emoji & Symbols**, or **Open Settings** to open a command. You can change the launcher shortcut in Settings.
 
-**Quicklinks:** Settings → Quicklinks creates, edits, and removes named `https://` or `http://` URLs and absolute or `~/` file/folder paths. Unsupported schemes and empty names are rejected.
+Launch at login is enabled on first launch, subject to macOS approval. Manage it in Settings → General. **Command-Q hides the interface**; use **Quit Kebloop** in the menu-bar menu to exit.
 
-**Aliases:** Settings → Aliases assigns an alternate search name to an app. Exact aliases outrank exact app names: Ghostty with alias `terminal` appears above Terminal. Aliases persist and duplicate aliases are rejected.
+File results depend on Spotlight indexing and macOS access permissions. Siri handoff requires Siri, Type to Siri, and the system permission described in the [usage guide](docs/usage.md#ai-handoff).
 
-**App shortcuts:** Settings → App Shortcuts lets you search an installed app and record a physical key combination containing Command, Option, or Control. Assignments persist across restarts. Duplicate assignments, launcher conflicts, and unavailable system shortcuts produce feedback. Recording temporarily releases global shortcuts and restores them when finished or cancelled.
+## Development
 
-**Clipboard:** Text copied after Kebloop starts is recorded locally; the existing clipboard is not ingested on startup. Duplicate text moves to the front, and entries larger than 100 KB are skipped. Concealed, transient, autogenerated, and password-marked clipboard content is excluded. Settings → Clipboard pauses recording or clears saved history. Use a row’s trash button or Command-Backspace to remove an item. Clear… or Command-Shift-Backspace opens a confirmation to clear all saved history. Images and rich-text history are not included in this version.
+Open `Package.swift` in Xcode, or use the command line:
 
-**Files:** Filename search runs directly from root search, with apps above files and no separate command to open. A 35 ms debounce starts Spotlight searches; cached query snapshots appear immediately while narrowing or revisiting a query, and new results stream during gathering. Hidden paths, app package contents, `~/Library`, and `node_modules` are excluded. Temporary directories, editor backup/swap files, and partial downloads are also excluded. Git repositories are checked against their `.gitignore` rules before either cached or fresh results appear, including nested rules, negations, worktrees, and configured excludes. This uses local `/usr/bin/git` (provided by Xcode or Command Line Tools); tracked files follow Git’s own ignore semantics. Checks run on a worker queue and rule changes apply on the next search. Exact names and prefixes rank before substring matches, with a boost for Documents/Desktop/Downloads/Public. Results depend on Spotlight indexing and macOS access restrictions. This is filename search, not full-content search; the service keeps up to 40 results per query and root search displays up to 12.
+```sh
+swift build
+swift test -c release
+```
 
-## AI handoff
-
-Settings → General → AI provider selects **OpenAI (ChatGPT)**, **Claude**, or **Local (Siri)**. Type a query in root search and press **Tab**, or click the compact Ask button. Your selection persists across restarts.
-
-ChatGPT opens with your query filled in using a prompt-bearing URL. Claude also receives the query in its URL; signing in may be required. Siri opens a new conversation, fills the native query field, and submits it directly. Enable Siri and Type to Siri, then allow Kebloop under System Settings → Privacy & Security → Device Control and Data Access (Accessibility on older macOS) once. Development builds use an available Apple Development signing identity to preserve grants across rebuilds; set `KEBLOOP_SIGNING_IDENTITY` to choose one. Without a signing identity, the ad-hoc fallback requires renewing the grant after each rebuild. No API keys are required.
-
-Finder is indexed explicitly from CoreServices, alongside the user-facing CoreServices applications, so it appears in app search.
-
-AI handoff text is marked transient so Kebloop does not add it to clipboard history. Blank queries and modified Tab shortcuts keep their normal behavior. If a destination fails to open, the launcher restores the query and shows an error.
-
-## Calculator
-
-Examples: `2*(3+4)`, `2^10`, `sqrt(81)`, `abs(-2)`, `round(2.6)`, `15% of 200`, `20% off 80`.
-
-Supports `+ - * / ^`, parentheses, unary signs, scientific notation, `pi`, `e`, and decimal commas or dots. Powers associate right to left; `-2^2` is `-4`. `%` is a fraction: `200 + 10%` is `200.1`; use `10% of 200` for `20`. Functions take one argument. Thousands grouping, currencies, units, and dates are outside the initial calculator grammar.
-
-Calculations use Double and display up to 16 significant digits with insignificant floating-point noise suppressed. Clipboard output uses the same ungrouped decimal-dot representation. Expression/token/depth limits bound evaluation; unfinished expressions stay quiet.
-
-The panel uses native Liquid Glass on macOS 26+, with interactive glass on macOS 27. Older supported releases use a native popover material. The launcher has no branding or keybinding footer.
-
-**Background lifecycle:** Command-Q hides Kebloop’s interface without quitting. Closing all windows leaves it running in the menu bar. Launch at login is enabled automatically on the first launch of this version, with any required macOS approval shown in settings. An explicit menu-bar Quit command remains available, and system shutdown/logout can terminate the app normally.
-
-## App discovery and storage
-
-Scans `/Applications`, `/System/Applications`, `~/Applications`, and the system Cryptex application directory (Safari), including organizational subfolders. App bundles are not traversed for embedded helpers; hidden and background-only apps are excluded. Cached results appear immediately; scans run in the background on startup, each launcher opening, every five minutes, and manual refresh. Native workspace icons are cached directly and prewarmed in small yielded batches; visible icons take priority.
-
-Search matches exact names, prefixes, word prefixes, and fuzzy subsequences, with a small usage boost. App metadata is cached in `~/Library/Caches/Kebloop/application-index.json`; shortcut preferences, app bindings, aliases, quicklinks, emoji recents, and launch counts use UserDefaults. Clipboard text history is stored in `~/Library/Application Support/Kebloop/clipboard-history.json` with owner-only permissions. No Accessibility permission is needed for the core workflows.
-
-## Verification
-
-Release XCTest coverage checks matching/ranking, duplicate names, calculator grammar, invalid input, precision, emoji search, quicklink validation/persistence, clipboard limits/deduplication/privacy/persistence, file-query cancellation/caching/ranking, alias priority/persistence, clipboard removal, Carbon shortcut event routing, and AI provider persistence/clipboard handoff/target selection. A synthetic 1,000-app ranking benchmark averaged approximately 9 ms on the development Mac. This measures ranking, not full input-to-render latency or parity with Raycast.
-
-Native UI smoke checks covered app/calculator workflows, Settings search, creating and opening a quicklink, recording/copying clipboard entries, finding an indexed file, emoji search/copy, and the app shortcut recorder. App-scoped UI automation does not deliver system-wide Carbon hotkey events, so physical keyboard invocation of global shortcuts needs a manual check; native registration and Carbon event-routing tests pass. Multiple displays, full-screen Spaces, VoiceOver, login startup, and the under-100-ms open target still need broader device testing.
-
-See [PLAN.md](PLAN.md) for scope and acceptance targets.
+- [Usage guide](docs/usage.md): commands, calculator syntax, privacy, and storage.
+- [Project plan](PLAN.md): scope and acceptance targets.

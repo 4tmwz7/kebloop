@@ -298,6 +298,9 @@ public final class EmojiPickerController: NSWindowController, NSWindowDelegate {
             let glass = NSGlassEffectView()
             glass.style = .regular
             glass.cornerRadius = 18
+            glass.wantsLayer = true
+            glass.layer?.cornerRadius = glass.cornerRadius
+            glass.layer?.masksToBounds = true
             if #available(macOS 27.0, *) { glass.effectIsInteractive = true }
             glass.contentView = hosting
             panel.contentView = glass
