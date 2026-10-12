@@ -2,6 +2,12 @@ import Foundation
 
 // Run on the file-search worker queue: filesystem checks and Git never block input.
 final class FileSearchExclusions: Sendable {
+    // These process-wide paths and membership tables do not change per candidate.
+    private static let temporaryRoots = Set([NSTemporaryDirectory(), "/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp"].map {
+        ($0 as NSString).standardizingPath
+    })
+    private static let temporarySuffixes: Set<String> = ["tmp", "temp", "swp", "swo", "bak", "orig", "rej", "part", "partial", "crdownload", "download"]
+
     func filter(_ files: [FileSearchResult], shouldCancel: () -> Bool = { false }) -> [FileSearchResult] {
         guard !shouldCancel() else { return [] }
         let candidates = files.filter { file in
@@ -37,20 +43,27 @@ final class FileSearchExclusions: Sendable {
     }
 
     static func isTemporary(path: String) -> Bool {
-        let normalized = (path as NSString).standardizingPath
-        let temporaryRoots = [NSTemporaryDirectory(), "/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp"]
+        // Spotlight supplies absolute canonical paths. Only unusual caller paths
+        // need Foundation's more expensive tilde/dot-component normalization.
+        let normalized = path.hasPrefix("/") && !path.contains("//") && !path.contains("/.")
+            ? path : (path as NSString).standardizingPath
         if temporaryRoots.contains(where: { root in
-            let root = (root as NSString).standardizingPath
-            return normalized == root || normalized.hasPrefix(root + "/")
+            normalized == root || normalized.hasPrefix(root + "/")
         }) { return true }
-        let components = normalized.split(separator: "/").map { $0.lowercased() }
+        let components = normalized.split(separator: "/")
         // Only whole directory names qualify; template.txt and tempest are ordinary files.
-        if components.dropLast().contains(where: { $0 == "tmp" || $0 == "temp" }) { return true }
-        let suffixes = ["tmp", "temp", "swp", "swo", "bak", "orig", "rej", "part", "partial", "crdownload", "download"]
-        return components.contains { component in
-            component.hasPrefix("~$") || component.hasSuffix("~")
-                || suffixes.contains((component as NSString).pathExtension)
+        for (index, component) in components.enumerated() {
+            let lowercase = component.lowercased()
+            if index < components.count - 1 && (lowercase == "tmp" || lowercase == "temp") { return true }
+            if lowercase.hasPrefix("~$") || lowercase.hasSuffix("~") { return true }
+            if let dot = lowercase.lastIndex(of: ".") {
+                let suffix = lowercase.hasPrefix(".")
+                    ? (lowercase as NSString).pathExtension
+                    : String(lowercase[lowercase.index(after: dot)...])
+                if temporarySuffixes.contains(suffix) { return true }
+            }
         }
+        return false
     }
 
     private func repository(containing path: String, cache: inout [String: String], outside: inout Set<String>) -> String? {

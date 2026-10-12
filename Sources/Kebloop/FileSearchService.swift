@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import os
 
 struct FileSearchResult: Identifiable, Hashable, Sendable {
     let name: String
@@ -9,12 +10,14 @@ struct FileSearchResult: Identifiable, Hashable, Sendable {
     var url: URL { URL(fileURLWithPath: path) }
     static let libraryPath = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library").path
 
+    private static let packageSuffixes: Set<String> = ["app", "bundle", "framework", "plugin", "appex"]
+
     static func isVisibleFile(path: String) -> Bool {
         guard !FileSearchExclusions.isTemporary(path: path), path != libraryPath, !path.hasPrefix(libraryPath + "/") else { return false }
         return !path.split(separator: "/").contains { component in
-            component.hasPrefix(".") || component == "node_modules" || ["app", "bundle", "framework", "plugin", "appex"].contains(
-                (String(component) as NSString).pathExtension.lowercased()
-            )
+            if component.hasPrefix(".") || component == "node_modules" { return true }
+            guard let dot = component.lastIndex(of: ".") else { return false }
+            return packageSuffixes.contains(component[component.index(after: dot)...].lowercased())
         }
     }
 
@@ -81,6 +84,8 @@ final class FileSearchService: ObservableObject {
     @Published private(set) var results: [FileSearchResult] = []
     @Published private(set) var isSearching = false
 
+    private nonisolated static let performanceLog = OSLog(subsystem: "com.kebloop.launcher", category: .pointsOfInterest)
+    private var searchInterval: OSSignpostID?
     private var query: NSMetadataQuery?
     private var observers: [NSObjectProtocol] = []
     private var debounceTask: Task<Void, Never>?
@@ -95,6 +100,9 @@ final class FileSearchService: ObservableObject {
         let searchText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !searchText.isEmpty else { return }
         isSearching = true
+        let interval = OSSignpostID(log: Self.performanceLog)
+        searchInterval = interval
+        os_signpost(.begin, log: Self.performanceLog, name: "File search", signpostID: interval)
         let token = generation
         let cached = cache.matching(searchText)
         if !cached.isEmpty { publishFiltered(cached, text: searchText, generation: token, finished: false) }
@@ -115,8 +123,16 @@ final class FileSearchService: ObservableObject {
         query = nil
         for observer in observers { NotificationCenter.default.removeObserver(observer) }
         observers = []
-        results = []
-        isSearching = false
+        if !results.isEmpty { results = [] }
+        finishSearch()
+    }
+
+    private func finishSearch() {
+        if isSearching { isSearching = false }
+        if let interval = searchInterval {
+            os_signpost(.end, log: Self.performanceLog, name: "File search", signpostID: interval)
+            searchInterval = nil
+        }
     }
 
     private func start(_ text: String, generation: Int) {
@@ -147,7 +163,7 @@ final class FileSearchService: ObservableObject {
                 }
             })
         }
-        if !query.start() { isSearching = false }
+        if !query.start() { finishSearch() }
     }
 
     private func collect(_ query: NSMetadataQuery, text: String, finished: Bool, cursor: Int = 0, accumulated: [FileSearchResult] = []) {
@@ -193,17 +209,20 @@ final class FileSearchService: ObservableObject {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.generation == generation, self.filterRequest === request,
                       !request.isCancelled else { return }
-                self.results = ranked
+                if self.results != ranked { self.results = ranked }
                 self.cache.store(ranked, for: text)
                 if let more, ranked.count < 40 {
                     // Keep reading in bounded slices so ignored matches cannot fill the result budget.
                     more(ranked)
-                } else if finished { self.isSearching = false }
+                } else if finished { self.finishSearch() }
             }
         }
     }
 
     deinit {
+        if let interval = searchInterval {
+            os_signpost(.end, log: Self.performanceLog, name: "File search", signpostID: interval)
+        }
         filterRequest?.cancel()
         debounceTask?.cancel()
         query?.stop()

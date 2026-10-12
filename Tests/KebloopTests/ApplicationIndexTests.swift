@@ -3,6 +3,23 @@ import XCTest
 @testable import Kebloop
 
 final class ApplicationIndexTests: XCTestCase {
+    func testRefreshDueRequiresMissingOrExpiredCompletionTimestamp() {
+        let now = Date()
+        let interval: TimeInterval = 5 * 60
+
+        XCTAssertTrue(ApplicationIndex.isRefreshDue(lastCompletedAt: nil, now: now, interval: interval))
+        XCTAssertFalse(ApplicationIndex.isRefreshDue(
+            lastCompletedAt: now.addingTimeInterval(-interval + 1),
+            now: now,
+            interval: interval
+        ))
+        XCTAssertTrue(ApplicationIndex.isRefreshDue(
+            lastCompletedAt: now.addingTimeInterval(-interval),
+            now: now,
+            interval: interval
+        ))
+    }
+
     func testAdditionalApplicationBundleOutsideRootsIsIncluded() throws {
         try withDirectory { root in
             let scannedFolder = root.appendingPathComponent("Applications", isDirectory: true)

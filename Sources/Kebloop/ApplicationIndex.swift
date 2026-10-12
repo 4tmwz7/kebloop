@@ -22,8 +22,12 @@ final class ApplicationIndex: ObservableObject {
     private var pendingIconPaths = Set<String>()
     private var iconWarmupTask: Task<Void, Never>?
     private var refreshTimer: Timer?
+    private var lastRefreshCompletedAt: Date?
+    private let refreshInterval: TimeInterval = 5 * 60
 
     init() {
+        iconCache.countLimit = 128
+        iconCache.totalCostLimit = 48 * 1024 * 1024
         applications = Self.loadCache()
         warmIcons(for: applications)
         refresh()
@@ -55,9 +59,29 @@ final class ApplicationIndex: ObservableObject {
                     self.applications = discovered
                 }
                 self.isRefreshing = false
+                self.lastRefreshCompletedAt = Date()
                 self.warmIcons(for: discovered)
             }
         }
+    }
+
+    func refreshIfNeeded() {
+        guard !isRefreshing else { return }
+        guard Self.isRefreshDue(
+            lastCompletedAt: lastRefreshCompletedAt,
+            now: Date(),
+            interval: refreshInterval
+        ) else { return }
+        refresh()
+    }
+
+    nonisolated static func isRefreshDue(
+        lastCompletedAt: Date?,
+        now: Date,
+        interval: TimeInterval
+    ) -> Bool {
+        guard let lastCompletedAt else { return true }
+        return now.timeIntervalSince(lastCompletedAt) >= interval
     }
 
     func icon(for app: IndexedApplication) -> NSImage? {
@@ -88,13 +112,13 @@ final class ApplicationIndex: ObservableObject {
         // can fail for lazily loaded icons and discards newer system icon variants.
         // AppKit image lookup and use both stay on the main actor.
         let image = NSWorkspace.shared.icon(forFile: path)
-        iconCache.setObject(image, forKey: key)
+        iconCache.setObject(image, forKey: key, cost: Self.iconCost(image))
         return true
     }
 
     private func warmIcons(for applications: [IndexedApplication]) {
         iconWarmupTask?.cancel()
-        let paths = applications.map(\.path)
+        let paths = applications.prefix(32).map(\.path)
         iconWarmupTask = Task(priority: .utility) { @MainActor [weak self] in
             for path in paths {
                 guard !Task.isCancelled, let self else { return }
@@ -108,6 +132,14 @@ final class ApplicationIndex: ObservableObject {
                 }
             }
         }
+    }
+
+    private nonisolated static func iconCost(_ image: NSImage) -> Int {
+        let representationCost = image.representations.reduce(into: 0) { total, representation in
+            total += max(1, representation.pixelsWide) * max(1, representation.pixelsHigh) * 4
+        }
+        let logicalSizeCost = Int(image.size.width * image.size.height * 4)
+        return max(representationCost, logicalSizeCost)
     }
 
     func launch(_ app: IndexedApplication, completion: @escaping (Error?) -> Void) {

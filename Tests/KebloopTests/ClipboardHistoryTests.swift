@@ -128,6 +128,29 @@ final class ClipboardHistoryTests: XCTestCase {
         XCTAssertTrue(cleared.isEmpty)
     }
 
+    func testSnapshotWriterCoalescesBurstToLatestSnapshot() async throws {
+        let firstWriteStarted = DispatchSemaphore(value: 0)
+        let finishFirstWrite = DispatchSemaphore(value: 0)
+        let recorder = SnapshotRecorder()
+        let writer = CoalescedSnapshotWriter<Int>(queue: DispatchQueue(label: "ClipboardHistoryTests.snapshot-writer")) { value in
+            if value == 0 {
+                firstWriteStarted.signal()
+                finishFirstWrite.wait()
+            }
+            recorder.append(value)
+        }
+
+        writer.enqueue(0)
+        XCTAssertEqual(firstWriteStarted.wait(timeout: .now() + 2), .success)
+        for snapshot in 1...500 { writer.enqueue(snapshot) }
+        finishFirstWrite.signal()
+
+        for _ in 0..<100 where recorder.values.last != 500 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(recorder.values, [0, 500], "A burst should write the in-flight snapshot and only its newest successor")
+    }
+
     func testFileSearchStopCancelsPendingDebounce() async throws {
         let service = FileSearchService()
         service.search("synthetic-unlikely-filename")
@@ -157,6 +180,23 @@ final class ClipboardHistoryTests: XCTestCase {
         let store = ClipboardHistoryStore(defaults: defaults, pasteboard: pasteboard, storageURL: storageURL)
         return Fixture(store: store, pasteboard: pasteboard, defaults: defaults, suite: suite,
                        directory: directory, storageURL: storageURL)
+    }
+}
+
+private final class SnapshotRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recordedValues: [Int] = []
+
+    var values: [Int] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedValues
+    }
+
+    func append(_ value: Int) {
+        lock.lock()
+        recordedValues.append(value)
+        lock.unlock()
     }
 }
 

@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import Kebloop
 
@@ -59,6 +60,25 @@ final class FileSearchTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(75))
         XCTAssertFalse(service.isSearching)
         XCTAssertTrue(service.results.isEmpty)
+    }
+
+    @MainActor
+    func testRepeatedStopDoesNotPublishUnchangedState() {
+        let service = FileSearchService()
+        var resultUpdates = 0
+        var statusUpdates = 0
+        let rows = service.$results.dropFirst().sink { _ in resultUpdates += 1 }
+        let status = service.$isSearching.dropFirst().sink { _ in statusUpdates += 1 }
+        service.stop()
+        service.stop()
+        XCTAssertEqual(resultUpdates, 0)
+        XCTAssertEqual(statusUpdates, 0)
+        service.search("pending")
+        service.stop()
+        service.stop()
+        XCTAssertEqual(resultUpdates, 0)
+        XCTAssertEqual(statusUpdates, 2)
+        withExtendedLifetime((rows, status)) {}
     }
 
     private func file(_ name: String) -> FileSearchResult {

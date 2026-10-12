@@ -2,6 +2,43 @@ import AppKit
 import Combine
 import Foundation
 
+final class CoalescedSnapshotWriter<Value: Sendable>: @unchecked Sendable {
+    private let queue: DispatchQueue
+    private let write: @Sendable (Value) -> Void
+    private let lock = NSLock()
+    private var pendingSnapshot: Value?
+    private var drainScheduled = false
+
+    init(queue: DispatchQueue, write: @escaping @Sendable (Value) -> Void) {
+        self.queue = queue
+        self.write = write
+    }
+
+    func enqueue(_ snapshot: Value) {
+        lock.lock()
+        pendingSnapshot = snapshot
+        let shouldScheduleDrain = !drainScheduled
+        drainScheduled = true
+        lock.unlock()
+
+        guard shouldScheduleDrain else { return }
+        queue.async { [self] in drain() }
+    }
+
+    private func drain() {
+        while true {
+            lock.lock()
+            let snapshot = pendingSnapshot
+            pendingSnapshot = nil
+            if snapshot == nil { drainScheduled = false }
+            lock.unlock()
+
+            guard let snapshot else { return }
+            write(snapshot)
+        }
+    }
+}
+
 struct ClipboardEntry: Identifiable, Codable, Hashable, Sendable {
     let id: String
     let text: String
@@ -20,16 +57,20 @@ final class ClipboardHistoryStore: ObservableObject {
             defaults.set(enabled, forKey: Self.enabledKey)
             // Never collect clipboard content copied while recording was disabled.
             lastChangeCount = pasteboard.changeCount
+            updatePolling()
         }
     }
 
     private static let enabledKey = "clipboardHistoryEnabled"
     private nonisolated static let itemLimit = 200
     private nonisolated static let byteLimit = 100 * 1024
+    // JSON can expand control characters to six bytes per source byte, plus entry metadata.
+    private nonisolated static let maximumStorageBytes = itemLimit * (byteLimit * 6 + 512)
     private let defaults: UserDefaults
     private let pasteboard: NSPasteboard
     private let storageURL: URL?
-    private let storageQueue = DispatchQueue(label: "Kebloop.clipboard-storage", qos: .utility)
+    private let storageQueue: DispatchQueue
+    private let snapshotWriter: CoalescedSnapshotWriter<[ClipboardEntry]>
     private var timer: Timer?
     private var lastChangeCount: Int
     private var revision = 0
@@ -37,16 +78,22 @@ final class ClipboardHistoryStore: ObservableObject {
     init(defaults: UserDefaults = .standard, pasteboard: NSPasteboard = .general, storageURL: URL? = nil) {
         self.defaults = defaults
         self.pasteboard = pasteboard
-        self.storageURL = storageURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+        let resolvedStorageURL = storageURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent("Kebloop", isDirectory: true)
             .appendingPathComponent("clipboard-history.json")
+        self.storageURL = resolvedStorageURL
+        let storageQueue = DispatchQueue(label: "Kebloop.clipboard-storage", qos: .utility)
+        self.storageQueue = storageQueue
+        let targetURL = resolvedStorageURL
+        snapshotWriter = CoalescedSnapshotWriter(queue: storageQueue) { snapshot in
+            guard let targetURL else { return }
+            Self.write(snapshot, to: targetURL)
+        }
         enabled = defaults.object(forKey: Self.enabledKey) as? Bool ?? true
         // Taking the baseline before starting the timer excludes the pre-existing clipboard.
         lastChangeCount = pasteboard.changeCount
         load()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.poll() }
-        }
+        updatePolling()
     }
 
     deinit { timer?.invalidate() }
@@ -70,10 +117,10 @@ final class ClipboardHistoryStore: ObservableObject {
     }
 
     func poll() {
+        guard enabled else { return }
         let count = pasteboard.changeCount
         guard count != lastChangeCount else { return }
         lastChangeCount = count
-        guard enabled else { return }
         // Password managers and temporary clipboard writers mark content with these types.
         let types = pasteboard.types ?? []
         guard !types.contains(where: {
@@ -97,7 +144,10 @@ final class ClipboardHistoryStore: ObservableObject {
     private func load() {
         guard let storageURL else { return }
         storageQueue.async { [weak self] in
-            guard let data = try? Data(contentsOf: storageURL),
+            guard let attributes = try? FileManager.default.attributesOfItem(atPath: storageURL.path),
+                  let fileSize = attributes[.size] as? Int,
+                  fileSize <= Self.maximumStorageBytes,
+                  let data = try? Data(contentsOf: storageURL),
                   let decoded = try? JSONDecoder().decode([ClipboardEntry].self, from: data) else { return }
             var seen = Set<String>()
             let loaded = Array(decoded.sorted { $0.date > $1.date }.filter {
@@ -113,31 +163,45 @@ final class ClipboardHistoryStore: ObservableObject {
 
     private func persist() {
         revision &+= 1
-        let snapshot = items
-        guard let storageURL else { return }
-        // Serial writes preserve clear/remove ordering, including any previously queued save.
-        storageQueue.async {
-            let manager = FileManager.default
-            let directory = storageURL.deletingLastPathComponent()
-            do {
-                try manager.createDirectory(at: directory, withIntermediateDirectories: true,
-                                            attributes: [.posixPermissions: 0o700])
-                try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
-                let data = try JSONEncoder().encode(snapshot)
-                // Apply permissions to the temporary file before replacing the stored history.
-                let temporary = directory.appendingPathComponent(".clipboard-\(UUID().uuidString).json")
-                defer { try? manager.removeItem(at: temporary) }
-                guard manager.createFile(atPath: temporary.path, contents: data,
-                                         attributes: [.posixPermissions: 0o600]) else { return }
-                if manager.fileExists(atPath: storageURL.path) {
-                    _ = try manager.replaceItemAt(storageURL, withItemAt: temporary)
-                } else {
-                    try manager.moveItem(at: temporary, to: storageURL)
-                }
-                try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: storageURL.path)
-            } catch {
-                // Recording still works for this session if local storage is unavailable.
+        guard storageURL != nil else { return }
+        // Keep only the newest pending state so a burst cannot queue hundreds of full-history snapshots.
+        // A clear or removal is persisted because the writer always finishes with the latest state.
+        snapshotWriter.enqueue(items)
+    }
+
+    private func updatePolling() {
+        if enabled {
+            guard timer == nil else { return }
+            timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.poll() }
             }
+        } else {
+            timer?.invalidate()
+            timer = nil
+        }
+    }
+
+    private nonisolated static func write(_ snapshot: [ClipboardEntry], to storageURL: URL) {
+        let manager = FileManager.default
+        let directory = storageURL.deletingLastPathComponent()
+        do {
+            try manager.createDirectory(at: directory, withIntermediateDirectories: true,
+                                        attributes: [.posixPermissions: 0o700])
+            try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+            let data = try JSONEncoder().encode(snapshot)
+            // Apply permissions to the temporary file before replacing the stored history.
+            let temporary = directory.appendingPathComponent(".clipboard-\(UUID().uuidString).json")
+            defer { try? manager.removeItem(at: temporary) }
+            guard manager.createFile(atPath: temporary.path, contents: data,
+                                     attributes: [.posixPermissions: 0o600]) else { return }
+            if manager.fileExists(atPath: storageURL.path) {
+                _ = try manager.replaceItemAt(storageURL, withItemAt: temporary)
+            } else {
+                try manager.moveItem(at: temporary, to: storageURL)
+            }
+            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: storageURL.path)
+        } catch {
+            // Recording still works for this session if local storage is unavailable.
         }
     }
 }

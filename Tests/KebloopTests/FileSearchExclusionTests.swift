@@ -16,6 +16,17 @@ final class FileSearchExclusionTests: XCTestCase {
         }
     }
 
+    func testTemporaryClassificationNormalizesUnusualPaths() {
+        for path in ["/Users/person/ordinary/../TEMP/report.txt", "/Users/person//temp/report.txt",
+                     "/Users/person/./report.TMP", "/Users/person/report.TmP"] {
+            XCTAssertTrue(FileSearchExclusions.isTemporary(path: path), path)
+        }
+        for path in ["/Users/person/temp/../report.txt", "/Users/person/report.tmp-notes.txt",
+                     "/Users/person/folder/../template.txt", "/Users/person/.tmp", "/Users/person/...tmp"] {
+            XCTAssertFalse(FileSearchExclusions.isTemporary(path: path), path)
+        }
+    }
+
     func testGitRulesRespectNestedNegationsAndTrackedFiles() throws {
         try withDirectory { root in
             try git(["init", "-q"], at: root)

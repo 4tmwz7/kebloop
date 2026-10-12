@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import KebloopCore
+import os
 
 private final class LauncherPanel: NSPanel {
     override var canBecomeKey: Bool { true }
@@ -101,6 +102,12 @@ private final class FlippedStackView: NSStackView {
 
 private final class ResultButton: NSButton {
     var invoke: (() -> Void)?
+    weak var selectionHint: NSTextField?
+
+    func setSelected(_ selected: Bool) {
+        layer?.backgroundColor = selected ? NSColor.controlAccentColor.withAlphaComponent(0.14).cgColor : NSColor.clear.cgColor
+        selectionHint?.stringValue = selected ? "↵" : ""
+    }
     override var acceptsFirstResponder: Bool { false }
     init() {
         super.init(frame: .zero)
@@ -129,6 +136,7 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
     private var isConfirmingClear = false
     private let files = FileSearchService()
     private var mode: LauncherMode = .root
+    private static let performanceLog = OSLog(subsystem: "com.kebloop.launcher", category: .pointsOfInterest)
     private let search = AppSearch()
     private let calculator = CalculatorEngine()
     private let panel: LauncherPanel
@@ -171,26 +179,26 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
             }.store(in: &subscriptions)
         panel.setAccessibilityLabel("Kebloop launcher")
         buildInterface()
-        index.$applications.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.updateResults(preserveSelection: true) }.store(in: &subscriptions)
+        index.$applications.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in guard let self, self.panel.isVisible else { return }; self.updateResults(preserveSelection: true) }.store(in: &subscriptions)
         index.$iconRevision.dropFirst().throttle(for: .milliseconds(30), scheduler: DispatchQueue.main, latest: true).sink { [weak self] _ in
             guard let self, self.panel.isVisible else { return }; self.render()
         }.store(in: &subscriptions)
-        quicklinks.$links.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.updateResults(preserveSelection: true) }.store(in: &subscriptions)
+        quicklinks.$links.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in guard let self, self.panel.isVisible else { return }; self.updateResults(preserveSelection: true) }.store(in: &subscriptions)
         clipboard.$items.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in
-            guard let self, self.mode == .clipboard else { return }
+            guard let self, self.panel.isVisible, self.mode == .clipboard else { return }
             self.updateResults(preserveSelection: true)
         }.store(in: &subscriptions)
         files.$results.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in
-            guard let self, self.mode == .root else { return }
+            guard let self, self.panel.isVisible, self.mode == .root else { return }
             self.updateResults(preserveSelection: true)
         }.store(in: &subscriptions)
         files.$isSearching.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in
-            guard let self, self.mode == .root else { return }; self.render()
+            guard let self, self.panel.isVisible, self.mode == .root, self.results.isEmpty else { return }; self.render()
         }.store(in: &subscriptions)
         aliases.$aliases.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in
-            self?.updateResults(preserveSelection: false)
+            guard let self, self.panel.isVisible else { return }; self.updateResults(preserveSelection: false)
         }.store(in: &subscriptions)
-        ai.$provider.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in self?.render() }.store(in: &subscriptions)
+        ai.$provider.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in guard let self, self.panel.isVisible else { return }; self.render() }.store(in: &subscriptions)
         keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.panel.isKeyWindow else { return event }
             if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "," {
@@ -225,6 +233,11 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
         outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             self?.dismiss(restoreFocus: false)
         }
+    }
+
+    deinit {
+        if let keyboardMonitor { NSEvent.removeMonitor(keyboardMonitor) }
+        if let outsideMonitor { NSEvent.removeMonitor(outsideMonitor) }
     }
 
     private func buildInterface() {
@@ -368,7 +381,7 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
            frontmost.processIdentifier != ProcessInfo.processInfo.processIdentifier {
             previousApp = frontmost
         }
-        index.refresh()
+        index.refreshIfNeeded()
         mode = .root
         files.stop()
         input.stringValue = ""
@@ -404,6 +417,11 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
     }
     func windowDidResignKey(_ notification: Notification) { if !isConfirmingClear { dismiss(restoreFocus: false) } }
     func controlTextDidChange(_ obj: Notification) {
+        setQuery(input.stringValue)
+    }
+
+    func setQuery(_ query: String) {
+        if input.stringValue != query { input.stringValue = query }
         message = nil
         if mode == .root {
             if case .result = calculator.evaluate(input.stringValue) { files.stop() }
@@ -426,6 +444,9 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
     }
 
     private func updateResults(preserveSelection: Bool = false) {
+        let interval = OSSignpostID(log: Self.performanceLog)
+        os_signpost(.begin, log: Self.performanceLog, name: "Query results", signpostID: interval)
+        defer { os_signpost(.end, log: Self.performanceLog, name: "Query results", signpostID: interval) }
         let selectedID = preserveSelection && results.indices.contains(selection) ? results[selection].id : nil
         let query = input.stringValue
         switch mode {
@@ -479,10 +500,13 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
         return search.ranked(query: query, entries: entries, usage: usage).compactMap { byID[$0.id] }
     }
 
-    private func moveSelection(_ delta: Int) {
+    func moveSelection(_ delta: Int) {
         guard !results.isEmpty else { return }
+        let previous = selection
         selection = min(max(0, selection + delta), results.count - 1)
-        render()
+        guard previous != selection else { return }
+        (rows.arrangedSubviews[previous] as? ResultButton)?.setSelected(false)
+        (rows.arrangedSubviews[selection] as? ResultButton)?.setSelected(true)
         rows.layoutSubtreeIfNeeded()
         if rows.arrangedSubviews.indices.contains(selection) {
             rows.scrollToVisible(rows.arrangedSubviews[selection].frame)
@@ -490,6 +514,9 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
     }
 
     private func render() {
+        let interval = OSSignpostID(log: Self.performanceLog)
+        os_signpost(.begin, log: Self.performanceLog, name: "Render rows", signpostID: interval)
+        defer { os_signpost(.end, log: Self.performanceLog, name: "Render rows", signpostID: interval) }
         for view in rows.arrangedSubviews { rows.removeArrangedSubview(view); view.removeFromSuperview() }
         category.stringValue = mode.title
         input.placeholderString = mode.placeholder
@@ -568,6 +595,7 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
             subtitleLabel.lineBreakMode = .byTruncatingMiddle
             let hint = NSTextField(labelWithString: position == selection ? "↵" : "")
             hint.textColor = .secondaryLabelColor
+            button.selectionHint = hint
             for view in [image, titleLabel, subtitleLabel, hint] { view.translatesAutoresizingMaskIntoConstraints = false; button.addSubview(view) }
             NSLayoutConstraint.activate([
                 button.heightAnchor.constraint(equalToConstant: 44),

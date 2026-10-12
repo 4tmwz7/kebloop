@@ -18,6 +18,19 @@ public struct AppSearchEntry: Identifiable, Hashable, Sendable {
 public struct AppSearch {
     public init() {}
 
+    private struct PreparedEntry {
+        let entry: AppSearchEntry
+        let normalizedName: String
+        let usage: Int
+    }
+
+    private struct ScoredEntry {
+        let entry: AppSearchEntry
+        let normalizedName: String
+        let score: Int
+        let usage: Int
+    }
+
     public func ranked(
         query: String,
         entries: [AppSearchEntry],
@@ -25,43 +38,71 @@ public struct AppSearch {
     ) -> [AppSearchEntry] {
         let normalizedQuery = Self.normalize(query)
         guard !normalizedQuery.isEmpty else {
-            return entries.sorted { left, right in
-                let leftUsage = usage[left.id, default: 0]
-                let rightUsage = usage[right.id, default: 0]
-                if leftUsage != rightUsage { return leftUsage > rightUsage }
-                return Self.stableNameOrder(left, right)
-            }
+            return entries.map { entry in
+                PreparedEntry(
+                    entry: entry,
+                    normalizedName: Self.normalize(entry.name),
+                    usage: usage[entry.id, default: 0]
+                )
+            }.sorted { left, right in
+                if left.usage != right.usage { return left.usage > right.usage }
+                return Self.stableNameOrder(
+                    left.entry,
+                    left.normalizedName,
+                    right.entry,
+                    right.normalizedName
+                )
+            }.map(\.entry)
         }
 
         let queryWords = Self.words(in: normalizedQuery)
+        let queryCharacters = Array(normalizedQuery)
         return entries
-            .compactMap { entry -> (entry: AppSearchEntry, score: Int, usage: Int)? in
-                let name = Self.normalize(entry.name)
+            .compactMap { entry -> ScoredEntry? in
+                let normalizedName = Self.normalize(entry.name)
+                let entryUsage = usage[entry.id, default: 0]
                 let nameScore = Self.matchScore(
                     query: normalizedQuery,
+                    queryCharacters: queryCharacters,
                     queryWords: queryWords,
-                    name: name
+                    name: normalizedName
                 )
                 let aliasScore = entry.aliases.compactMap { alias in
-                    Self.aliasMatchScore(query: normalizedQuery, queryWords: queryWords, alias: alias)
+                    Self.aliasMatchScore(
+                        query: normalizedQuery,
+                        queryCharacters: queryCharacters,
+                        queryWords: queryWords,
+                        alias: alias
+                    )
                 }.max()
                 guard let matchScore = [nameScore, aliasScore].compactMap({ $0 }).max() else { return nil }
 
-                return (
-                    entry,
-                    matchScore + Self.usageBoost(usage[entry.id, default: 0]),
-                    max(0, usage[entry.id, default: 0])
+                return ScoredEntry(
+                    entry: entry,
+                    normalizedName: normalizedName,
+                    score: matchScore + Self.usageBoost(entryUsage),
+                    usage: max(0, entryUsage)
                 )
             }
             .sorted { left, right in
                 if left.score != right.score { return left.score > right.score }
                 if left.usage != right.usage { return left.usage > right.usage }
-                return Self.stableNameOrder(left.entry, right.entry)
+                return Self.stableNameOrder(
+                    left.entry,
+                    left.normalizedName,
+                    right.entry,
+                    right.normalizedName
+                )
             }
             .map(\.entry)
     }
 
-    private static func matchScore(query: String, queryWords: [String], name: String) -> Int? {
+    private static func matchScore(
+        query: String,
+        queryCharacters: [Character],
+        queryWords: [String],
+        name: String
+    ) -> Int? {
         if name == query { return 1_200 }
 
         if name.hasPrefix(query) {
@@ -73,10 +114,15 @@ public struct AppSearch {
             return wordPrefixScore
         }
 
-        return subsequenceScore(query: query, name: name)
+        return subsequenceScore(queryCharacters: queryCharacters, name: name)
     }
 
-    private static func aliasMatchScore(query: String, queryWords: [String], alias: String) -> Int? {
+    private static func aliasMatchScore(
+        query: String,
+        queryCharacters: [Character],
+        queryWords: [String],
+        alias: String
+    ) -> Int? {
         let normalizedAlias = normalize(alias)
         guard !normalizedAlias.isEmpty else { return nil }
 
@@ -92,57 +138,57 @@ public struct AppSearch {
             return prefixScore + 10
         }
 
-        return subsequenceScore(query: query, name: normalizedAlias).map { $0 + 15 }
+        return subsequenceScore(queryCharacters: queryCharacters, name: normalizedAlias).map { $0 + 15 }
     }
 
     private static func wordPrefixScore(queryWords: [String], nameWords: [String]) -> Int? {
         guard !queryWords.isEmpty, !nameWords.isEmpty else { return nil }
 
         var nextNameWord = 0
-        var matchedPositions: [Int] = []
+        var positionPenalty = 0
         for queryWord in queryWords {
             guard let position = nameWords.indices.first(where: {
                 $0 >= nextNameWord && nameWords[$0].hasPrefix(queryWord)
             }) else { return nil }
-            matchedPositions.append(position)
+            positionPenalty += position * 12
             nextNameWord = position + 1
         }
 
-        let positionPenalty = matchedPositions.reduce(0, +) * 12
         if queryWords.count > 1 {
             return 950 - min(100, positionPenalty)
         }
         return 900 - min(100, positionPenalty)
     }
 
-    private static func subsequenceScore(query: String, name: String) -> Int? {
-        let queryCharacters = Array(query)
+    private static func subsequenceScore(queryCharacters: [Character], name: String) -> Int? {
         let nameCharacters = Array(name)
         guard !queryCharacters.isEmpty, queryCharacters.count <= nameCharacters.count else { return nil }
 
-        var positions: [Int] = []
+        var firstPosition: Int?
+        var previousPosition: Int?
+        var gaps = 0
+        var wordStarts = 0
+        var adjacentPairs = 0
         var searchStart = 0
         for character in queryCharacters {
             guard let position = nameCharacters[searchStart...].firstIndex(of: character) else {
                 return nil
             }
-            positions.append(position)
+            if firstPosition == nil {
+                firstPosition = position
+            } else if let previousPosition {
+                gaps += position - previousPosition - 1
+                if position == previousPosition + 1 { adjacentPairs += 1 }
+            }
+            if position == 0 || !nameCharacters[position - 1].isLetter && !nameCharacters[position - 1].isNumber {
+                wordStarts += 1
+            }
+            previousPosition = position
             searchStart = position + 1
         }
 
-        let gaps = zip(positions, positions.dropFirst()).reduce(into: 0) { total, pair in
-            total += pair.1 - pair.0 - 1
-        }
-        let wordStarts = positions.reduce(into: 0) { total, position in
-            if position == 0 || !nameCharacters[position - 1].isLetter && !nameCharacters[position - 1].isNumber {
-                total += 1
-            }
-        }
-        let adjacentPairs = positions.dropFirst().enumerated().reduce(into: 0) { total, item in
-            if item.element == positions[item.offset] + 1 { total += 1 }
-        }
-
-        return 700 - min(50, positions[0] * 2) - min(80, gaps * 4)
+        guard let firstPosition else { return nil }
+        return 700 - min(50, firstPosition * 2) - min(80, gaps * 4)
             + min(30, wordStarts * 10) + min(20, adjacentPairs * 5)
     }
 
@@ -181,10 +227,13 @@ public struct AppSearch {
         return result
     }
 
-    private static func stableNameOrder(_ left: AppSearchEntry, _ right: AppSearchEntry) -> Bool {
-        let leftName = normalize(left.name)
-        let rightName = normalize(right.name)
-        if leftName != rightName { return leftName < rightName }
+    private static func stableNameOrder(
+        _ left: AppSearchEntry,
+        _ normalizedLeftName: String,
+        _ right: AppSearchEntry,
+        _ normalizedRightName: String
+    ) -> Bool {
+        if normalizedLeftName != normalizedRightName { return normalizedLeftName < normalizedRightName }
         if left.name != right.name { return left.name < right.name }
         return left.id < right.id
     }

@@ -1,0 +1,118 @@
+{
+  "environment": {
+    "architecture": "arm64",
+    "macos": "27.0",
+    "swift": "6.4",
+    "date": "2026-10-12",
+    "build": "release",
+    "baseline_commit": "8bdf210da6aec3f36eaf8fd84c5a2a6833571b1f"
+  },
+  "baseline_samples": [
+    {
+      "application_count": 117,
+      "first_show_ms": 73.33149999999478,
+      "idle_cpu_percent": 0.1136000000000159,
+      "index_ready_ms": 413.67583333334323,
+      "navigation_p50_ms": 5.220375000021704,
+      "navigation_p95_ms": 10.962624999990567,
+      "peak_rss_mib": 161.203125,
+      "query_p50_ms": 5.542041666615205,
+      "query_p95_ms": 11.300291666657358,
+      "workload_cpu_seconds": 5.52918,
+      "workload_wall_seconds": 6.24898970833334
+    },
+    {
+      "application_count": 117,
+      "first_show_ms": 68.34070833332362,
+      "idle_cpu_percent": 0.0772399999999962,
+      "index_ready_ms": 412.0054583333399,
+      "navigation_p50_ms": 5.271791666643821,
+      "navigation_p95_ms": 8.549458333334314,
+      "peak_rss_mib": 161,
+      "query_p50_ms": 4.2174583333576265,
+      "query_p95_ms": 11.257166666666762,
+      "workload_cpu_seconds": 5.659976,
+      "workload_wall_seconds": 5.987790500000017
+    },
+    {
+      "application_count": 117,
+      "first_show_ms": 106.25120833333312,
+      "idle_cpu_percent": 0.2599400000000074,
+      "index_ready_ms": 494.9797083333465,
+      "navigation_p50_ms": 5.04145833332359,
+      "navigation_p95_ms": 7.240416666661531,
+      "peak_rss_mib": 161.328125,
+      "query_p50_ms": 5.165250000004562,
+      "query_p95_ms": 10.622708333301034,
+      "workload_cpu_seconds": 5.359446999999999,
+      "workload_wall_seconds": 5.834794166666654
+    }
+  ],
+  "optimized_samples": [
+    {
+      "application_count": 117,
+      "first_show_ms": 68.35679166664477,
+      "idle_cpu_percent": 0.24860000000000324,
+      "index_ready_ms": 374.6892083333364,
+      "navigation_p50_ms": 0.06124999998746716,
+      "navigation_p95_ms": 0.08091666666132369,
+      "peak_rss_mib": 121.375,
+      "query_p50_ms": 4.574916666683748,
+      "query_p95_ms": 10.299916666667741,
+      "workload_cpu_seconds": 1.0796260000000002,
+      "workload_wall_seconds": 1.2494582499999751
+    },
+    {
+      "application_count": 117,
+      "first_show_ms": 66.02204166665615,
+      "idle_cpu_percent": 0.24937999999999683,
+      "index_ready_ms": 380.8174166666731,
+      "navigation_p50_ms": 0.06062500006009941,
+      "navigation_p95_ms": 0.08054166664805962,
+      "peak_rss_mib": 121.40625,
+      "query_p50_ms": 3.3319583333195624,
+      "query_p95_ms": 10.415166666689402,
+      "workload_cpu_seconds": 1.0489620000000002,
+      "workload_wall_seconds": 1.212340916666676
+    },
+    {
+      "application_count": 117,
+      "first_show_ms": 69.26916666668603,
+      "idle_cpu_percent": 0.2496600000000004,
+      "index_ready_ms": 353.7307916667487,
+      "navigation_p50_ms": 0.05954166670107952,
+      "navigation_p95_ms": 0.08045833328651497,
+      "peak_rss_mib": 121.46875,
+      "query_p50_ms": 3.3609583333600312,
+      "query_p95_ms": 10.65020833334529,
+      "workload_cpu_seconds": 1.044838,
+      "workload_wall_seconds": 1.2057310000000143
+    }
+  ],
+  "baseline_medians": {
+    "application_count": 117,
+    "first_show_ms": 73.33149999999478,
+    "idle_cpu_percent": 0.1136000000000159,
+    "index_ready_ms": 413.67583333334323,
+    "navigation_p50_ms": 5.220375000021704,
+    "navigation_p95_ms": 8.549458333334314,
+    "peak_rss_mib": 161.203125,
+    "query_p50_ms": 5.165250000004562,
+    "query_p95_ms": 11.257166666666762,
+    "workload_cpu_seconds": 5.52918,
+    "workload_wall_seconds": 5.987790500000017
+  },
+  "optimized_medians": {
+    "application_count": 117,
+    "first_show_ms": 68.35679166664477,
+    "idle_cpu_percent": 0.24937999999999683,
+    "index_ready_ms": 374.6892083333364,
+    "navigation_p50_ms": 0.06062500006009941,
+    "navigation_p95_ms": 0.08054166664805962,
+    "peak_rss_mib": 121.40625,
+    "query_p50_ms": 3.3609583333600312,
+    "query_p95_ms": 10.415166666689402,
+    "workload_cpu_seconds": 1.0489620000000002,
+    "workload_wall_seconds": 1.212340916666676
+  }
+}

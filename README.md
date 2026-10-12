@@ -92,4 +92,5 @@ swift test -c release
 ```
 
 - [Usage guide](docs/usage.md): commands, calculator syntax, privacy, and storage.
+- [Performance profiling](docs/performance.md): repeatable latency, CPU, and memory measurements.
 - [Project plan](PLAN.md): scope and acceptance targets.

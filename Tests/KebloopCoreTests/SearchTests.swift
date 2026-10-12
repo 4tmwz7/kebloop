@@ -98,7 +98,11 @@ final class SearchTests: XCTestCase {
         XCTAssertEqual(search.ranked(query: "saf", entries: entries).map(\.id), ["a", "b"])
     }
 
-    func testThousandAppSearchPerformance() {
+    func testThousandAppSearchPerformance() throws {
+        guard ProcessInfo.processInfo.environment["KEBLOOP_PROFILE"] == "1" else {
+            throw XCTSkip("Set KEBLOOP_PROFILE=1 to run the search timing sample.")
+        }
+
         let entries = (0..<1000).map { entry("app-\($0)", "Application Tool \($0)") }
         measure {
             let results = search.ranked(query: "at", entries: entries)
