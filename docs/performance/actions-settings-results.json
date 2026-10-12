@@ -1,0 +1,19 @@
+{
+  "date": "2026-10-12",
+  "platform": "arm64 macOS 27.0",
+  "sample_count": 1,
+  "launcher": {
+    "application_count": 117,
+    "first_show_ms": 82.28729166648918,
+    "idle_cpu_percent": 0.2323800000000098,
+    "index_ready_ms": 379.04241666683447,
+    "navigation_p50_ms": 0.08000000025276677,
+    "navigation_p95_ms": 0.10320833325749845,
+    "peak_rss_mib": 130.265625,
+    "query_p50_ms": 6.217333333097486,
+    "query_p95_ms": 13.569958333391696,
+    "workload_cpu_seconds": 1.328345,
+    "workload_wall_seconds": 1.5122181249998903
+  },
+  "file_visibility_duration_ms": 612.8258
+}

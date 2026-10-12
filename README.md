@@ -72,13 +72,14 @@ These are local development builds, not notarized distribution releases. A stabl
 | Open a result or copy a calculation | Return |
 | Close the launcher or return from a command | Escape |
 | Open settings | Command-comma |
+| Show selected result actions | Command-K |
 | Send a query to your AI provider | Tab |
 
 Type **Clipboard History**, **Quicklinks**, **Emoji & Symbols**, or **Open Settings** to open a command. You can change the launcher shortcut in Settings.
 
 Type **shutdown** (or **power off** / **turn off**) and press Return to open the macOS shutdown confirmation. Confirm there to turn off your Mac, or cancel to keep working.
 
-Launch at login is enabled on first launch, subject to macOS approval. Manage it in Settings → General. **Command-Q hides the interface**; use **Quit Kebloop** in the menu-bar menu to exit.
+On first launch, a skippable walkthrough lets you choose launch at login and clipboard recording. Manage them later in Settings; existing choices are preserved. **Command-Q hides the interface**; use **Quit Kebloop** in the menu-bar menu to exit.
 
 File results depend on Spotlight indexing and macOS access permissions. Siri handoff requires Siri, Type to Siri, and the system permission described in the [usage guide](docs/usage.md#ai-handoff).
 
@@ -94,3 +95,4 @@ swift test -c release
 - [Usage guide](docs/usage.md): commands, calculator syntax, privacy, and storage.
 - [Performance profiling](docs/performance.md): repeatable latency, CPU, and memory measurements.
 - [Project plan](PLAN.md): scope and acceptance targets.
+- [Feature roadmap](docs/roadmap.md): next features, implementation chunks, dependencies, and acceptance criteria.

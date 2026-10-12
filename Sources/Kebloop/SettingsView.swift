@@ -1,6 +1,7 @@
 import AppKit
-import SwiftUI
 import Carbon
+import SwiftUI
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @ObservedObject var preferences: Preferences
@@ -10,169 +11,1328 @@ struct SettingsView: View {
     @ObservedObject var aliases: AppAliasStore
     @ObservedObject var clipboard: ClipboardHistoryStore
     @ObservedObject var ai: AIHandoffService
+    @ObservedObject var personalization: PersonalizationStore
+    @ObservedObject var configuration: ConfigurationStore
+    @ObservedObject var commandShortcuts: CommandShortcutStore
+    @ObservedObject var appleShortcuts: AppleShortcutsService
+    var onReplayOnboarding: () -> Void = {}
+    var onExecute: (String) -> Void = { _ in }
+
     @State private var editingID: String?
     @State private var linkName = ""
     @State private var linkTarget = ""
+    @State private var linkKeyword = ""
     @State private var linkError: String?
+    @State private var webSearchName = "Web Search"
+    @State private var webSearchKeyword = "web"
+    @State private var webSearchTarget = "https://duckduckgo.com/?q={query}"
+    @State private var webSearchError: String?
+    @State private var editingWebSearchID: String?
+    @State private var appleShortcutInput = ""
+    @State private var appleShortcutFeedback: String?
     @State private var appQuery = ""
     @State private var recordingApp: IndexedApplication?
+    @State private var recordingCommandID: String?
+    @State private var recordingLauncherShortcut = false
     @State private var clearConfirmation = false
+    @State private var resetSearchConfirmation = false
     @State private var siriTrusted = false
+    @State private var folderFeedback: String?
+    @State private var hiddenAppFeedback: String?
+    @State private var pathDraft = ""
+    @State private var pendingPreview: ConfigurationPreview?
+    @State private var configurationFeedback: String?
+    @State private var profileFeedback: String?
+    @State private var newProfileName = ""
+    @State private var profileNameDrafts: [String: String] = [:]
+    @State private var selectedSection: SettingsSection = .general
+    @AccessibilityFocusState private var shortcutButtonFocus: String?
 
     var body: some View {
-        TabView {
-            general.tabItem { Label("General", systemImage: "gearshape") }
-            links.tabItem { Label("Quicklinks", systemImage: "link") }
-            appShortcuts.tabItem { Label("App Shortcuts", systemImage: "command") }
-            appAliases.tabItem { Label("Aliases", systemImage: "text.magnifyingglass") }
-            clipboardSettings.tabItem { Label("Clipboard", systemImage: "doc.on.clipboard") }
+        HStack(alignment: .top, spacing: 16) {
+            sidebar
+                .frame(width: 220)
+                .frame(maxHeight: .infinity)
+
+            VStack(alignment: .leading, spacing: 0) {
+                detailHeader
+                    .padding(.horizontal, 24)
+                    .padding(.top, 22)
+                    .padding(.bottom, 16)
+
+                Group {
+                    switch selectedSection {
+                    case .general: general
+                    case .search: searchSettings
+                    case .appearance: appearanceSettings
+                    case .quicklinks: links
+                    case .appShortcuts: appShortcuts
+                    case .commandShortcuts: commandShortcutSettings
+                    case .appleShortcuts: appleShortcutSettings
+                    case .profiles: profiles
+                    case .configuration: configurationSettings
+                    case .aliases: appAliases
+                    case .clipboard: clipboardSettings
+                    case .help:
+                        HelpView(
+                            personalization: personalization,
+                            quicklinks: quicklinks,
+                            commandShortcuts: commandShortcuts,
+                            appleShortcuts: appleShortcuts,
+                            appShortcuts: shortcuts,
+                            clipboard: clipboard,
+                            launcherShortcutLabel: preferences.shortcut.label,
+                            onReplayOnboarding: onReplayOnboarding,
+                            onExecute: onExecute
+                        )
+                        .listStyle(.plain)
+                        .scrollContentBackground(.hidden)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.background.opacity(0.64), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
+            }
         }
-        .padding(12)
-        .frame(minWidth: 600, minHeight: 430)
+        .padding(14)
+        .frame(minWidth: 820, minHeight: 580)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .groupBoxStyle(SettingsCardStyle())
+        .preferredColorScheme(settingsColorScheme)
         .onAppear { siriTrusted = SiriPromptSender.isTrusted }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("KebloopSettingsTab"))) { notification in
+            guard let tab = notification.object as? String else { return }
+            if let section = SettingsSection(rawValue: tab) { selectedSection = section }
+            else if tab == "webSearch" { selectedSection = .quicklinks }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("KebloopEditQuicklink"))) { notification in
+            guard let link = notification.object as? Quicklink else { return }
+            selectedSection = .quicklinks
+            editingID = link.id
+            linkName = link.name
+            linkTarget = link.target
+            linkKeyword = link.keyword
+            linkError = nil
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             siriTrusted = SiriPromptSender.isTrusted
         }
-        .onDisappear { stopRecording() }
+        .onDisappear { stopAllRecordings() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { _ in
-            if recordingApp != nil { stopRecording() }
+            if recordingApp != nil || recordingCommandID != nil { stopAllRecordings() }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
-            if recordingApp != nil { stopRecording() }
+            if recordingApp != nil || recordingCommandID != nil { stopAllRecordings() }
+        }
+        .alert("Reset search settings?", isPresented: $resetSearchConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Reset Search Settings", role: .destructive) { resetSearchSettings() }
+        } message: {
+            Text("Search categories, folders, exclusions, hidden apps, empty-launcher behavior, and pinned favorites will return to their defaults.")
         }
     }
 
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 10) {
+                    Image(systemName: "command.square.fill")
+                        .font(.system(size: 24, weight: .medium))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(Color.accentColor)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Kebloop").font(.system(size: 16, weight: .semibold))
+                        Text("Settings").font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+
+                Button { selectedSection = .profiles } label: {
+                    HStack(spacing: 10) {
+                        ZStack {
+                            Circle().fill(Color.accentColor.opacity(0.12))
+                            Image(systemName: "person.crop.circle.fill")
+                                .font(.system(size: 17))
+                                .foregroundStyle(Color.accentColor)
+                        }
+                        .frame(width: 32, height: 32)
+                        .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(configuration.activeProfileName)
+                                .font(.callout.weight(.medium))
+                                .lineLimit(1)
+                            Text("Local profile")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                            .accessibilityHidden(true)
+                    }
+                    .padding(10)
+                    .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Active profile: \(configuration.activeProfileName)")
+                .accessibilityHint("Opens profile settings.")
+            }
+            .padding(14)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
+            }
+
+            ScrollViewReader { scrollProxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        ForEach(SettingsSectionGroup.allCases) { group in
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(group.title.uppercased())
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .tracking(0.7)
+                                    .foregroundStyle(.tertiary)
+                                    .padding(.leading, 10)
+                                    .padding(.bottom, 2)
+                                ForEach(group.sections) { section in
+                                    sidebarButton(section)
+                                        .id(section.id)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .scrollIndicators(.visible)
+                .onChange(of: selectedSection) { _, section in
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        scrollProxy.scrollTo(section.id, anchor: .center)
+                    }
+                }
+            }
+
+            Spacer(minLength: 0)
+            HStack(spacing: 7) {
+                Image(systemName: "lock.shield")
+                    .accessibilityHidden(true)
+                Text("Stored on this Mac")
+            }
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+            .padding(.leading, 10)
+        }
+        .padding(12)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.075), lineWidth: 1)
+        }
+    }
+
+    private func sidebarButton(_ section: SettingsSection) -> some View {
+        let selected = selectedSection == section
+        return Button {
+            selectedSection = section
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: section.symbol)
+                    .font(.system(size: 14, weight: selected ? .semibold : .regular))
+                    .frame(width: 19)
+                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                    .accessibilityHidden(true)
+                Text(section.title)
+                    .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 34)
+            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .background {
+                if selected {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(Color.accentColor.opacity(0.13))
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(selected ? Color.accentColor : Color.primary.opacity(0.82))
+        .accessibilityLabel(section.title)
+        .accessibilityValue(selected ? "Selected" : "")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private var detailHeader: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(selectedSection.title)
+                    .font(.system(size: 23, weight: .semibold))
+                    .tracking(-0.35)
+                Spacer()
+                Text(configuration.activeProfileName)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(Color.primary.opacity(0.045), in: Capsule())
+                    .accessibilityLabel("Profile: \(configuration.activeProfileName)")
+            }
+            Text(selectedSection.subtitle)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var settingsColorScheme: ColorScheme? {
+        switch personalization.settings.appearance {
+        case "light": .light
+        case "dark": .dark
+        default: nil
+        }
+    }
+
+    private func settingsPage<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12, content: content)
+                .padding(.horizontal, 22)
+                .padding(.top, 2)
+                .padding(.bottom, 20)
+        }
+        .scrollIndicators(.visible)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     private var general: some View {
-        Form {
-            Picker("Open launcher", selection: $preferences.shortcutID) {
-                ForEach(Shortcut.choices) { Text($0.label).tag($0.id) }
-            }.onChange(of: preferences.shortcutID) { _, _ in
-                preferences.saveShortcut()
+        settingsPage {
+            GroupBox("Launcher") {
+                VStack(alignment: .leading, spacing: 12) {
+                Picker("Open launcher", selection: $preferences.shortcutID) {
+                    ForEach(Shortcut.choices) { Text($0.label).tag($0.id) }
+                    if let custom = preferences.customShortcut { Text("Custom · \(custom.label)").tag("custom") }
+                }
+                .onChange(of: preferences.shortcutID) { _, _ in preferences.saveShortcut() }
+                Button("Record Custom Shortcut…") {
+                    stopAllRecordings()
+                    recordingLauncherShortcut = true
+                    shortcuts.suspend()
+                    commandShortcuts.suspend()
+                }
+                if let error = preferences.shortcutError { errorText(error) }
+                Text("⌘ Space may conflict with Spotlight or Raycast.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if recordingLauncherShortcut {
+                    recorderRow(title: "Press a shortcut for the launcher…", cancel: stopAllRecordings) { keyCode, modifiers, label in
+                        preferences.saveCustomShortcut(keyCode: keyCode, modifiers: modifiers, label: label)
+                        stopAllRecordings()
+                    }
+                    if let error = preferences.shortcutError { errorText(error) }
+                }
+                Toggle("Launch at login", isOn: Binding(get: { preferences.loginEnabled }, set: { preferences.setLogin($0) }))
+                if let error = preferences.loginError { errorText(error) }
+                }
             }
-            if let error = preferences.shortcutError { Text(error).foregroundStyle(.red).font(.caption) }
-            Text("⌘ Space may conflict with Spotlight or Raycast.").font(.caption).foregroundStyle(.secondary)
-            Toggle("Launch at login", isOn: Binding(get: { preferences.loginEnabled }, set: { preferences.setLogin($0) }))
-            if let error = preferences.loginError { Text(error).foregroundStyle(.red).font(.caption) }
-            Picker("AI provider", selection: $ai.provider) {
-                ForEach(AIProvider.allCases) { provider in Text(provider.settingsTitle).tag(provider) }
+
+            GroupBox("AI handoff") {
+                VStack(alignment: .leading, spacing: 10) {
+                Picker("AI provider", selection: $ai.provider) {
+                    ForEach(AIProvider.allCases) { provider in Text(provider.settingsTitle).tag(provider) }
+                }
+                Text(ai.provider.explanation).font(.caption).foregroundStyle(.secondary)
+                Text("Type a query in the launcher, then press Tab. ChatGPT opens with the query filled in; Siri receives and submits it directly.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if ai.provider == .local {
+                    if siriTrusted { Label("Siri automation is enabled.", systemImage: "checkmark.circle").font(.caption).foregroundStyle(.secondary) }
+                    else {
+                        Button("Allow Siri Automation…") {
+                            _ = SiriPromptSender.requestPermission()
+                            siriTrusted = SiriPromptSender.isTrusted
+                            openAccessibilitySettings()
+                        }
+                        .accessibilityHint("Opens macOS privacy settings so Kebloop can send text to Siri.")
+                    }
+                }
+                }
             }
-            Text(ai.provider.explanation).font(.caption).foregroundStyle(.secondary)
-            Text("Type a query in the launcher, then press Tab. ChatGPT opens with the query filled in; Siri receives and submits it directly.")
-                .font(.caption).foregroundStyle(.secondary)
-            if ai.provider == .local {
-                if siriTrusted { Text("Siri automation is enabled.").font(.caption).foregroundStyle(.secondary) }
-                else {
-                    Button("Allow Siri Automation…") {
-                        _ = SiriPromptSender.requestPermission()
-                        siriTrusted = SiriPromptSender.isTrusted
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                            NSWorkspace.shared.open(url)
+            GroupBox("Applications") {
+                VStack(alignment: .leading, spacing: 10) {
+                Button("Refresh Applications") { index.refresh() }.disabled(index.isRefreshing)
+                Button("Welcome and Help") { onReplayOnboarding() }
+                    .accessibilityHint("Opens the first-run walkthrough and command guide.")
+                }
+            }
+        }
+    }
+
+    private var searchSettings: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                GroupBox("Search categories") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("Applications", isOn: $personalization.settings.appsEnabled)
+                        Toggle("Files and folders", isOn: $personalization.settings.filesEnabled)
+                        Toggle("Quicklinks and web searches", isOn: $personalization.settings.linksEnabled)
+                        Toggle("Built-in commands", isOn: $personalization.settings.commandsEnabled)
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 4)
+                }
+
+                GroupBox("Searchable folders") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("File results are limited to these folders. You can select more than one.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        if personalization.settings.folders.isEmpty {
+                            Text("No folders selected. File search is disabled until you add one.").font(.callout).foregroundStyle(.secondary)
+                        }
+                        ForEach(personalization.settings.folders, id: \.self) { path in
+                            pathRow(path, unavailableMessage: "This folder is unavailable.") {
+                                personalization.settings.folders.removeAll { $0 == path }
+                            }
+                        }
+                        HStack {
+                            Button("Choose Folders…", systemImage: "folder.badge.plus") { chooseFolders() }
+                            Spacer()
+                        }
+                        if let folderFeedback { Text(folderFeedback).font(.caption).foregroundStyle(.secondary) }
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 4)
+                }
+
+                GroupBox("Exclude paths") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Excluded folders stay out of search even when they sit inside a searchable folder.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        ForEach(personalization.settings.exclusions, id: \.self) { path in
+                            pathRow(path, unavailableMessage: "This excluded path is unavailable.") {
+                                personalization.settings.exclusions.removeAll { $0 == path }
+                            }
+                        }
+                        HStack(spacing: 8) {
+                            TextField("/path/to/exclude or ~/Folder", text: $pathDraft)
+                                .textFieldStyle(.roundedBorder)
+                                .onSubmit(addExclusion)
+                            Button("Add") { addExclusion() }
+                                .disabled(pathDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            Button("Choose…") { chooseExclusion() }
+                                .accessibilityLabel("Choose a folder to exclude")
+                        }
+                        if let folderFeedback { Text(folderFeedback).font(.caption).foregroundStyle(.secondary) }
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 4)
+                }
+
+                GroupBox("Hidden applications") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Hide selected apps from launcher results. This does not remove app shortcuts or aliases.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        ForEach(personalization.settings.hiddenApps, id: \.self) { path in
+                            pathRow(path, unavailableMessage: "This application is unavailable.") {
+                                personalization.settings.hiddenApps.removeAll { $0 == path }
+                            }
+                        }
+                        HStack { Button("Choose Applications…", systemImage: "app.badge.plus") { chooseHiddenApps() }; Spacer() }
+                        if let hiddenAppFeedback { Text(hiddenAppFeedback).font(.caption).foregroundStyle(.secondary) }
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 4)
+                }
+
+                GroupBox("Empty launcher") {
+                    Picker("Show when search is empty", selection: $personalization.settings.emptyMode) {
+                        Text("Frequent apps").tag("frequent")
+                        Text("Recent apps").tag("recent")
+                        Text("Pinned favorites").tag("favorites")
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityLabel("Empty launcher results")
+                }
+
+                GroupBox("Pinned favorites") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if personalization.pins.isEmpty {
+                            Text("Pin supported results with ⌘K in the launcher. Favorites appear here and can be shown when search is empty.")
+                                .font(.callout).foregroundStyle(.secondary)
+                        } else {
+                            ForEach(personalization.pins) { pin in
+                                HStack(spacing: 8) {
+                                    Image(systemName: pinSymbol(pin.kind)).foregroundStyle(.secondary)
+                                        .accessibilityHidden(true)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(pin.name)
+                                        Text(pin.path).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                    }
+                                    Spacer()
+                                    Button(role: .destructive) { personalization.removePin(id: pin.id) } label: {
+                                        Image(systemName: "pin.slash")
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .accessibilityLabel("Remove \(pin.name) from pinned favorites")
+                                }
+                            }
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 4)
+                }
+
+                HStack {
+                    Spacer()
+                    Button("Reset Search Settings…", role: .destructive) { resetSearchConfirmation = true }
+                }
+            }
+            .padding(.horizontal, 22)
+            .padding(.top, 2)
+            .padding(.bottom, 20)
+        }
+        .scrollIndicators(.visible)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var appearanceSettings: some View {
+        settingsPage {
+            GroupBox("Appearance") {
+                VStack(alignment: .leading, spacing: 12) {
+                Picker("Color scheme", selection: $personalization.settings.appearance) {
+                    Text("System").tag("system")
+                    Text("Light").tag("light")
+                    Text("Dark").tag("dark")
+                }
+                Slider(value: $personalization.settings.textSize, in: 11...24, step: 1) {
+                    Text("Text size")
+                } minimumValueLabel: { Text("A") } maximumValueLabel: { Text("A").font(.title) }
+                Text("\(Int(personalization.settings.textSize)) pt sample text")
+                    .font(.system(size: personalization.settings.textSize))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Slider(value: $personalization.settings.panelWidth, in: 420...1000, step: 20) {
+                    Text("Panel width")
+                } minimumValueLabel: { Text("Narrow") } maximumValueLabel: { Text("Wide") }
+                Text("\(Int(personalization.settings.panelWidth)) points")
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("Compact rows", isOn: $personalization.settings.compact)
+                Toggle("Use translucent panel", isOn: $personalization.settings.transparency)
+                Text("macOS accessibility display settings take priority over reduced transparency and motion effects.")
+                    .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            GroupBox("Panel placement") {
+                VStack(alignment: .leading, spacing: 10) {
+                Picker("Place launcher on", selection: $personalization.settings.placement) {
+                    Text("Pointer display").tag("pointer")
+                    Text("Active window display").tag("active")
+                    Text("Selected display").tag("display")
+                }
+                if personalization.settings.placement == "display" {
+                    Picker("Display", selection: $personalization.settings.displayID) {
+                        ForEach(availableDisplays) { display in Text(display.name).tag(display.id) }
+                    }
+                    if !personalization.settings.displayID.isEmpty && !availableDisplays.contains(where: { $0.id == personalization.settings.displayID }) {
+                        Text("The selected display is unavailable. Kebloop will use the pointer display until it returns.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if availableDisplays.isEmpty { Text("No display information is available.").font(.caption).foregroundStyle(.secondary) }
+                }
+                }
+            }
+            GroupBox {
+                Button("Reset Appearance to Defaults") { resetAppearanceSettings() }
+            }
+        }
+    }
+
+    private var links: some View {
+        settingsPage {
+            GroupBox("Quicklinks") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Open websites, files, and folders by name. A keyword can also run a link with an argument, such as “gh kebloop”.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    if quicklinks.links.isEmpty {
+                        ContentUnavailableView("No quicklinks yet", systemImage: "link", description: Text("Add a website, file, or folder below."))
+                            .frame(maxWidth: .infinity, minHeight: 96)
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach(quicklinks.links) { link in
+                                HStack(spacing: 10) {
+                                    Image(systemName: "link").foregroundStyle(.secondary).accessibilityHidden(true)
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(link.name).font(.callout.weight(.medium))
+                                        Text([link.keyword.isEmpty ? nil : "\(link.keyword) …", link.target].compactMap { $0 }.joined(separator: "  ·  "))
+                                            .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                                    }
+                                    Spacer(minLength: 4)
+                                    Button("Edit") {
+                                        editingID = link.id; linkName = link.name; linkTarget = link.target; linkKeyword = link.keyword; linkError = nil
+                                    }
+                                    Button(role: .destructive) { quicklinks.remove(id: link.id); if editingID == link.id { resetLink() } } label: {
+                                        Image(systemName: "trash")
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .accessibilityLabel("Remove quicklink \(link.name)")
+                                }
+                                .padding(.vertical, 8)
+                                if link.id != quicklinks.links.last?.id { Divider() }
+                            }
+                        }
+                    }
+
+                    Divider()
+                    Text(editingID == nil ? "Add a quicklink" : "Edit quicklink")
+                        .font(.subheadline.weight(.semibold))
+                    TextField("Name", text: $linkName).textFieldStyle(.roundedBorder)
+                    TextField("Keyword (optional)", text: $linkKeyword).textFieldStyle(.roundedBorder)
+                    TextField("Website URL, file path, or folder path", text: $linkTarget).textFieldStyle(.roundedBorder)
+                    if !linkTarget.isEmpty, linkTarget.contains("{query}") {
+                        Text("Preview: \(Quicklink.destination(linkTarget, argument: "A space & tea")?.absoluteString ?? "This template is invalid.")")
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(2).textSelection(.enabled)
+                    }
+                    if let linkError { errorText(linkError) }
+                    HStack {
+                        Button(editingID == nil ? "Add Quicklink" : "Save Quicklink") {
+                            linkError = quicklinks.save(id: editingID, name: linkName, target: linkTarget, keyword: linkKeyword)
+                            if linkError == nil { resetLink() }
+                        }
+                        .disabled(linkName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || linkTarget.isEmpty)
+                        if editingID != nil { Button("Cancel") { resetLink() } }
+                        Spacer()
+                    }
+                }
+            }
+
+            GroupBox("Web search templates") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Use {query} where the encoded search text should go. For example, type “web cats” in the launcher.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    if quicklinks.webSearches.isEmpty {
+                        ContentUnavailableView("No web searches yet", systemImage: "magnifyingglass", description: Text("Add a search template with {query} in its URL."))
+                            .frame(maxWidth: .infinity, minHeight: 96)
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach(quicklinks.webSearches) { search in
+                                HStack(spacing: 10) {
+                                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text("\(search.name)  ·  \(search.keyword)").font(.callout.weight(.medium))
+                                        Text(search.target).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                                    }
+                                    Spacer(minLength: 4)
+                                    Button("Edit") {
+                                        editingWebSearchID = search.id
+                                        webSearchName = search.name; webSearchKeyword = search.keyword; webSearchTarget = search.target; webSearchError = nil
+                                    }
+                                    Button(role: .destructive) { quicklinks.removeWebSearch(id: search.id) } label: {
+                                        Image(systemName: "trash")
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .accessibilityLabel("Remove web search \(search.name)")
+                                }
+                                .padding(.vertical, 8)
+                                if search.id != quicklinks.webSearches.last?.id { Divider() }
+                            }
+                        }
+                    }
+                    Divider()
+                    Text(editingWebSearchID == nil ? "Add a web search" : "Edit web search")
+                        .font(.subheadline.weight(.semibold))
+                    TextField("Name", text: $webSearchName).textFieldStyle(.roundedBorder)
+                    TextField("Keyword", text: $webSearchKeyword).textFieldStyle(.roundedBorder)
+                    TextField("https://example.com/?q={query}", text: $webSearchTarget).textFieldStyle(.roundedBorder)
+                    if !webSearchTarget.isEmpty {
+                        let preview = WebSearchTemplate(id: "preview", name: webSearchName, keyword: webSearchKeyword, target: webSearchTarget).resolvedURL(argument: "Warsaw cafés & tea")
+                        Text("Preview: \(preview?.absoluteString ?? "Use a valid HTTP or HTTPS URL with {query}.")")
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(2).textSelection(.enabled)
+                    }
+                    if let webSearchError { errorText(webSearchError) }
+                    HStack {
+                        Button(editingWebSearchID == nil ? "Add Web Search" : "Save Web Search") {
+                            webSearchError = quicklinks.saveWebSearch(id: editingWebSearchID, name: webSearchName, keyword: webSearchKeyword, target: webSearchTarget)
+                            if webSearchError == nil { editingWebSearchID = nil }
+                        }
+                        Spacer()
+                    }
+                }
+            }
+        }
+    }
+
+    private var appShortcuts: some View {
+        settingsPage {
+            GroupBox("Application shortcuts") {
+                VStack(alignment: .leading, spacing: 12) {
+                    TextField("Search applications", text: $appQuery).textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Search applications for shortcuts")
+                    Text("Open an app from anywhere with Command, Option, or Control plus a key.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    if filteredApplications.isEmpty {
+                        ContentUnavailableView("No matching applications", systemImage: "app.dashed", description: Text("Try a different search or refresh the application index in General settings."))
+                            .frame(maxWidth: .infinity, minHeight: 120)
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach(filteredApplications) { app in
+                                let binding = shortcuts.bindings.first { $0.appPath == app.path }
+                                HStack(spacing: 10) {
+                                    appIcon(app)
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(app.name).font(.callout.weight(.medium))
+                                        if let error = shortcuts.errors[app.path] { errorText(error) }
+                                    }
+                                    Spacer(minLength: 4)
+                                    Button(binding?.label ?? "Record Shortcut") {
+                                        startAppRecording(app)
+                                    }
+                                    .accessibilityFocused($shortcutButtonFocus, equals: "app:\(app.path)")
+                                    if let binding {
+                                        Button(role: .destructive) { shortcuts.remove(id: binding.id) } label: { Image(systemName: "xmark.circle") }
+                                            .buttonStyle(.borderless)
+                                            .accessibilityLabel("Remove shortcut for \(app.name)")
+                                    }
+                                }
+                                .padding(.vertical, 9)
+                                if app.id != filteredApplications.last?.id { Divider() }
+                            }
+                        }
+                    }
+                    if let app = recordingApp {
+                        recorderRow(title: "Press a shortcut for \(app.name)…", cancel: stopAllRecordings) { keyCode, modifiers, label in
+                            if shortcuts.assign(app: app, keyCode: keyCode, modifiers: modifiers, label: label) {
+                                stopAllRecordings()
+                                shortcutButtonFocus = "app:\(app.path)"
+                            }
+                        }
+                        if let conflict = shortcuts.recorderConflict { errorText(conflict) }
+                    }
+                }
+            }
+        }
+        .onDisappear { stopAppRecording() }
+    }
+
+    private var commandShortcutSettings: some View {
+        settingsPage {
+            GroupBox("Command shortcuts") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Assign a global shortcut to a built-in command, quicklink, or selected Apple Shortcut. The same recorder and conflict checks apply to apps and commands.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    VStack(spacing: 0) {
+                        ForEach(commandShortcutTargets) { command in
+                            let binding = commandShortcuts.bindings.first { $0.id == command.id }
+                            HStack(spacing: 10) {
+                                Image(systemName: command.symbol).frame(width: 24).foregroundStyle(.secondary).accessibilityHidden(true)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(command.title).font(.callout.weight(.medium))
+                                    if let error = commandShortcuts.errors[command.id] { errorText(error) }
+                                }
+                                Spacer(minLength: 4)
+                                Button(binding?.label ?? "Record Shortcut") {
+                                    recordingCommandID = command.id
+                                    commandShortcuts.recorderConflict = nil
+                                    commandShortcuts.suspend()
+                                    DispatchQueue.main.async { shortcutButtonFocus = "command:\(command.id)" }
+                                }
+                                .accessibilityFocused($shortcutButtonFocus, equals: "command:\(command.id)")
+                                if let binding {
+                                    Button(role: .destructive) { commandShortcuts.remove(id: binding.id) } label: { Image(systemName: "xmark.circle") }
+                                        .buttonStyle(.borderless)
+                                        .accessibilityLabel("Remove shortcut for \(command.title)")
+                                }
+                            }
+                            .padding(.vertical, 8)
+                            if command.id != commandShortcutTargets.last?.id { Divider() }
+                        }
+                    }
+                    if let commandID = recordingCommandID, let command = commandShortcutTargets.first(where: { $0.id == commandID }) {
+                        recorderRow(title: "Press a shortcut for \(command.title)…", cancel: stopAllRecordings) { keyCode, modifiers, label in
+                            if commandShortcuts.assign(commandID: command.id, keyCode: keyCode, modifiers: modifiers, label: label) {
+                                stopAllRecordings()
+                                shortcutButtonFocus = "command:\(command.id)"
+                            }
+                        }
+                        if let conflict = commandShortcuts.recorderConflict { errorText(conflict) }
+                    }
+                }
+            }
+        }
+        .onDisappear { stopCommandRecording() }
+    }
+
+    private var appleShortcutSettings: some View {
+        settingsPage {
+            GroupBox("Available Apple Shortcuts") {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .top) {
+                        Text("Choose shortcuts to make available as launcher commands. macOS may ask permission when you run one.")
+                            .font(.callout).foregroundStyle(.secondary)
+                        Spacer(minLength: 8)
+                        Button("Refresh", systemImage: "arrow.clockwise") { appleShortcuts.refresh() }
+                            .disabled(appleShortcuts.isLoading)
+                            .accessibilityLabel("Refresh available Apple Shortcuts")
+                    }
+                    if appleShortcuts.isLoading { ProgressView("Loading Shortcuts…").frame(maxWidth: .infinity, alignment: .leading) }
+                    if let error = appleShortcuts.error { errorText(error) }
+                    if appleShortcuts.available.isEmpty && !appleShortcuts.isLoading {
+                        ContentUnavailableView("No Shortcuts found", systemImage: "square.stack.3d.up", description: Text("Create shortcuts in Apple's Shortcuts app, then refresh this list."))
+                            .frame(maxWidth: .infinity, minHeight: 140)
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach(appleShortcuts.available) { shortcut in
+                                let selected = appleShortcuts.selected.contains(where: { $0.id == shortcut.id })
+                                HStack(spacing: 10) {
+                                    Image(systemName: "square.stack.3d.up").foregroundStyle(.secondary).accessibilityHidden(true)
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(shortcut.name).font(.callout.weight(.medium))
+                                        if let error = appleShortcuts.errors[shortcut.id] { errorText(error) }
+                                    }
+                                    Spacer(minLength: 4)
+                                    Button(selected ? "Remove" : "Add") {
+                                        if selected { appleShortcuts.remove(id: shortcut.id) }
+                                        else { appleShortcuts.select(shortcut) }
+                                    }
+                                    .accessibilityLabel(selected ? "Remove \(shortcut.name) from Kebloop" : "Add \(shortcut.name) to Kebloop")
+                                }
+                                .padding(.vertical, 8)
+                                if shortcut.id != appleShortcuts.available.last?.id { Divider() }
+                            }
                         }
                     }
                 }
             }
-            Button("Refresh Applications") { index.refresh() }.disabled(index.isRefreshing)
-        }.formStyle(.grouped)
+            if !appleShortcuts.selected.isEmpty {
+                GroupBox("Selected shortcuts") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Optional text input is passed to the selected shortcut when you run it here.")
+                            .font(.callout).foregroundStyle(.secondary)
+                        TextField("Optional text input", text: $appleShortcutInput)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("Optional text input for Apple Shortcuts")
+                        ForEach(appleShortcuts.selected) { shortcut in
+                            HStack(spacing: 10) {
+                                Text(shortcut.name).font(.callout.weight(.medium))
+                                Spacer(minLength: 4)
+                                if appleShortcuts.runningID == shortcut.id {
+                                    ProgressView().controlSize(.small).accessibilityLabel("Running \(shortcut.name)")
+                                    Button("Cancel Run") { appleShortcuts.cancel() }
+                                } else {
+                                    Button("Run") {
+                                        let input = appleShortcutInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                                        appleShortcutFeedback = nil
+                                        appleShortcuts.run(id: shortcut.id, input: input.isEmpty ? nil : input) { error in
+                                            appleShortcutFeedback = error
+                                        }
+                                    }
+                                    .disabled(appleShortcuts.isRunning)
+                                    .accessibilityLabel("Run \(shortcut.name)\(appleShortcutInput.isEmpty ? "" : " with text input")")
+                                }
+                            }
+                        }
+                    }
+                }
+                if let appleShortcutFeedback { errorText(appleShortcutFeedback) }
+            }
+        }
+        .onAppear { appleShortcuts.refresh() }
+        .onDisappear { appleShortcuts.cancel() }
     }
 
-    private var links: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Open websites, files, and folders by name from the launcher.").foregroundStyle(.secondary)
-            List(quicklinks.links) { link in
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(link.name)
-                        Text(link.target).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+    private var profiles: some View {
+        settingsPage {
+            GroupBox("Profiles") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Profiles keep links, aliases, shortcuts, pins, and search and appearance preferences together. Launch at login and clipboard privacy stay global.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    VStack(spacing: 0) {
+                        ForEach(configuration.profiles) { profile in
+                            VStack(alignment: .leading, spacing: 9) {
+                                HStack(spacing: 8) {
+                                    TextField("Profile name", text: profileNameBinding(profile))
+                                        .textFieldStyle(.roundedBorder)
+                                        .onSubmit { renameProfile(profile) }
+                                    if profile.id == configuration.activeProfileID {
+                                        Label("Active", systemImage: "checkmark.circle.fill")
+                                            .font(.caption.weight(.medium)).foregroundStyle(Color.accentColor)
+                                    } else {
+                                        Button("Switch") { performProfileAction { try configuration.switchProfile(id: profile.id) } }
+                                    }
+                                }
+                                HStack(spacing: 8) {
+                                    Button("Save name") { renameProfile(profile) }
+                                        .disabled((profileNameDrafts[profile.id] ?? profile.name) == profile.name)
+                                    Button("Duplicate") {
+                                        let name = "\(profile.name) Copy"
+                                        performProfileAction { try configuration.duplicateProfile(id: profile.id, name: name) }
+                                    }
+                                    .accessibilityLabel("Duplicate profile \(profile.name)")
+                                    Button("Export") { exportConfiguration(profileID: profile.id) }
+                                        .accessibilityLabel("Export profile \(profile.name)")
+                                    Spacer(minLength: 2)
+                                    Button(role: .destructive) { performProfileAction { try configuration.deleteProfile(id: profile.id) } } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                    .disabled(configuration.profiles.count <= 1)
+                                    .accessibilityLabel("Delete profile \(profile.name)")
+                                }
+                                .controlSize(.small)
+                            }
+                            .padding(.vertical, 10)
+                            if profile.id != configuration.profiles.last?.id { Divider() }
+                        }
                     }
-                    Spacer()
-                    Button("Edit") { editingID = link.id; linkName = link.name; linkTarget = link.target; linkError = nil }
-                    Button { quicklinks.remove(id: link.id); if editingID == link.id { resetLink() } } label: { Image(systemName: "trash") }.help("Remove quicklink")
+                    Divider()
+                    Text("Create a profile").font(.subheadline.weight(.semibold))
+                    HStack(spacing: 8) {
+                        TextField("New profile name", text: $newProfileName).textFieldStyle(.roundedBorder)
+                        Button("Create Profile") {
+                            performProfileAction { _ = try configuration.createProfile(name: newProfileName); newProfileName = "" }
+                        }
+                        .disabled(newProfileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    if let profileFeedback { errorText(profileFeedback) }
                 }
             }
-            HStack {
-                TextField("Name", text: $linkName).frame(width: 160)
-                TextField("https://example.com or ~/Documents", text: $linkTarget)
-            }.textFieldStyle(.roundedBorder)
-            if let error = linkError { Text(error).font(.caption).foregroundStyle(.red) }
-            HStack {
-                Button(editingID == nil ? "Add Quicklink" : "Save Quicklink") {
-                    linkError = quicklinks.save(id: editingID, name: linkName, target: linkTarget)
-                    if linkError == nil { resetLink() }
-                }.disabled(linkName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || linkTarget.isEmpty)
-                if editingID != nil { Button("Cancel") { resetLink() } }
-            }
-        }.padding(12)
+        }
+        .onAppear { syncProfileDrafts() }
+        .onChange(of: configuration.profiles.map(\.id)) { _, _ in syncProfileDrafts() }
     }
 
-    private var appShortcuts: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            TextField("Search applications", text: $appQuery).textFieldStyle(.roundedBorder)
-            Text("Open an app from anywhere with Command, Option, or Control plus a key.").font(.caption).foregroundStyle(.secondary)
-            List(index.applications.filter { appQuery.isEmpty || $0.name.localizedCaseInsensitiveContains(appQuery) }) { app in
-                let binding = shortcuts.bindings.first { $0.appPath == app.path }
-                HStack(spacing: 10) {
-                    Group {
-                        if let icon = index.icon(for: app) { Image(nsImage: icon).resizable() }
-                        else { Image(systemName: "app.fill").resizable().foregroundStyle(.secondary) }
-                    }.frame(width: 24, height: 24)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(app.name)
-                        if let error = shortcuts.errors[app.path] { Text(error).font(.caption).foregroundStyle(.red) }
+    private var configurationSettings: some View {
+        settingsPage {
+            GroupBox("Configuration") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Export aliases, quicklinks, shortcuts, pins, search and appearance settings, and profiles. Clipboard contents, credentials, caches, and usage history are not included.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    HStack {
+                        Button("Export Configuration…", systemImage: "square.and.arrow.up") { exportConfiguration(profileID: nil) }
+                        Button("Import Configuration…", systemImage: "square.and.arrow.down") { importConfiguration() }
+                        Spacer(minLength: 0)
                     }
-                    Spacer()
-                    Button(binding?.label ?? "Record Shortcut") {
-                        recordingApp = app
-                        shortcuts.recorderConflict = nil
-                        shortcuts.suspend()
-                    }
-                    if let binding { Button { shortcuts.remove(id: binding.id) } label: { Image(systemName: "xmark.circle") }.help("Remove shortcut") }
+                    if let configurationFeedback { errorText(configurationFeedback) }
                 }
             }
-            if let app = recordingApp {
-                HStack {
-                    Text("Press a shortcut for \(app.name)…").font(.callout)
-                    ShortcutRecorder { keyCode, modifiers, label in
-                        if shortcuts.assign(app: app, keyCode: keyCode, modifiers: modifiers, label: label) { stopRecording() }
-                    } cancel: { stopRecording() }.frame(width: 1, height: 1)
-                    Spacer()
-                    Button("Cancel") { stopRecording() }
+            if let preview = pendingPreview {
+                GroupBox("Import preview") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(preview.summary, id: \.self) { summary in Label(summary, systemImage: "checkmark.circle").font(.callout) }
+                        if !preview.warnings.isEmpty {
+                            Divider()
+                            Text("Review before applying").font(.headline)
+                            ForEach(preview.warnings, id: \.self) { warning in Text("• \(warning)").font(.callout).foregroundStyle(.secondary) }
+                        }
+                        Divider()
+                        VStack(alignment: .leading, spacing: 8) {
+                            Button("Merge") { applyImport(preview, mode: .merge) }
+                            Button("Replace Existing Settings…", role: .destructive) { applyImport(preview, mode: .replace) }
+                            Button("Cancel") { pendingPreview = nil; configurationFeedback = nil }
+                        }
+                        Text("Merge adds items with new IDs and keeps existing values on conflicts. Replace saves a backup before applying imported settings.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
-                if let conflict = shortcuts.recorderConflict { Text(conflict).foregroundStyle(.red).font(.caption) }
             }
-        }.padding(12).onDisappear { stopRecording() }
+        }
     }
 
     private var clipboardSettings: some View {
-        Form {
-            Toggle("Enable clipboard history", isOn: $clipboard.enabled)
-            Text("Copied text is stored locally on this Mac. Disable history to stop collecting new items.").font(.callout).foregroundStyle(.secondary)
-            Text("\(clipboard.items.count) saved items").foregroundStyle(.secondary)
-            Button("Clear Clipboard History", role: .destructive) { clearConfirmation = true }
-                .disabled(clipboard.items.isEmpty)
-                .alert("Clear clipboard history?", isPresented: $clearConfirmation) {
-                    Button("Cancel", role: .cancel) {}
-                    Button("Clear History", role: .destructive) { clipboard.clear() }
-                } message: { Text("All saved clipboard items will be removed.") }
-        }.formStyle(.grouped)
+        settingsPage {
+            GroupBox("Clipboard history") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Toggle("Enable clipboard history", isOn: $clipboard.enabled)
+                    Text("Copied text is stored locally on this Mac. Disable history to stop collecting new items.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    Label("\(clipboard.items.count) saved items", systemImage: "doc.on.clipboard")
+                        .font(.callout).foregroundStyle(.secondary)
+                    Button("Clear Clipboard History", systemImage: "trash", role: .destructive) { clearConfirmation = true }
+                        .disabled(clipboard.items.isEmpty)
+                        .alert("Clear clipboard history?", isPresented: $clearConfirmation) {
+                            Button("Cancel", role: .cancel) {}
+                            Button("Clear History", role: .destructive) { clipboard.clear() }
+                        } message: { Text("All saved clipboard items will be removed.") }
+                }
+            }
+        }
     }
 
     private var appAliases: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            TextField("Search applications", text: $appQuery).textFieldStyle(.roundedBorder)
-            Text("Give an app a name to search for, such as “terminal” for Ghostty.")
-                .font(.caption).foregroundStyle(.secondary)
-            List(index.applications.filter { app in
-                appQuery.isEmpty
-                    || app.name.localizedCaseInsensitiveContains(appQuery)
-                    || (aliases.alias(for: app)?.localizedCaseInsensitiveContains(appQuery) ?? false)
-            }) { app in
-                AppAliasRow(app: app, index: index, aliases: aliases)
+        settingsPage {
+            GroupBox("Application aliases") {
+                VStack(alignment: .leading, spacing: 12) {
+                    TextField("Search applications", text: $appQuery).textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("Search applications for aliases")
+                    Text("Give an app a name to search for, such as “terminal” for Ghostty.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    let matchingApplications = index.applications.filter { app in
+                        appQuery.isEmpty
+                            || app.name.localizedCaseInsensitiveContains(appQuery)
+                            || (aliases.alias(for: app)?.localizedCaseInsensitiveContains(appQuery) ?? false)
+                    }
+                    if matchingApplications.isEmpty {
+                        ContentUnavailableView("No matching applications", systemImage: "app.dashed", description: Text("Try another search term."))
+                            .frame(maxWidth: .infinity, minHeight: 100)
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach(matchingApplications) { app in
+                                AppAliasRow(app: app, index: index, aliases: aliases)
+                                    .padding(.vertical, 7)
+                                if app.id != matchingApplications.last?.id { Divider() }
+                            }
+                        }
+                    }
+                }
             }
-        }.padding(12)
+        }
     }
 
-    private func resetLink() { editingID = nil; linkName = ""; linkTarget = ""; linkError = nil }
-    private func stopRecording() { recordingApp = nil; shortcuts.recorderConflict = nil; shortcuts.resume() }
+    private var filteredApplications: [IndexedApplication] {
+        index.applications.filter { appQuery.isEmpty || $0.name.localizedCaseInsensitiveContains(appQuery) }
+    }
+
+    private var commandShortcutTargets: [CommandShortcutTarget] {
+        let builtIns = LauncherCommand.allCases.map { CommandShortcutTarget(id: $0.id, title: $0.title, symbol: $0.symbol) }
+        let links = quicklinks.links.map { CommandShortcutTarget(id: "link:\($0.id)", title: $0.name, symbol: "link") }
+        let shortcuts = appleShortcuts.selected.map { CommandShortcutTarget(id: "apple:\($0.id)", title: $0.name, symbol: "square.stack.3d.up") }
+        return builtIns + links + shortcuts
+    }
+
+    private var availableDisplays: [DisplayOption] {
+        NSScreen.screens.map { screen in
+            let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+            let identifier = number.map { String($0.uint32Value) } ?? screen.localizedName
+            return DisplayOption(id: identifier, name: screen.localizedName)
+        }
+    }
+
+    private func appIcon(_ app: IndexedApplication) -> some View {
+        Group {
+            if let icon = index.icon(for: app) { Image(nsImage: icon).resizable() }
+            else { Image(systemName: "app.fill").resizable().foregroundStyle(.secondary) }
+        }
+        .frame(width: 24, height: 24)
+        .accessibilityHidden(true)
+    }
+
+    private func pathRow(_ path: String, unavailableMessage: String, remove: @escaping () -> Void) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: FileManager.default.fileExists(atPath: (path as NSString).expandingTildeInPath) ? "folder" : "exclamationmark.folder")
+                .foregroundStyle(FileManager.default.fileExists(atPath: (path as NSString).expandingTildeInPath) ? Color.secondary : Color.orange)
+                .accessibilityHidden(true)
+            Text(path).lineLimit(1).help(path)
+            if !FileManager.default.fileExists(atPath: (path as NSString).expandingTildeInPath) {
+                Text(unavailableMessage).font(.caption).foregroundStyle(.orange)
+            }
+            Spacer()
+            Button(role: .destructive, action: remove) { Image(systemName: "trash") }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Remove \(path)")
+        }
+    }
+
+    private func chooseFolders() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose Searchable Folders"
+        panel.prompt = "Add Folders"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+        let additions = panel.urls.map(\.standardizedFileURL.path).filter { !$0.isEmpty }
+        personalization.settings.folders = Array(Set(personalization.settings.folders + additions)).sorted()
+        folderFeedback = additions.isEmpty ? "No folders were added." : "Added \(additions.count) folder\(additions.count == 1 ? "" : "s")."
+    }
+
+    private func chooseExclusion() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose a Folder to Exclude"
+        panel.prompt = "Exclude Folder"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        appendPath(url.standardizedFileURL.path, to: \.exclusions)
+    }
+
+    private func chooseHiddenApps() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose Applications to Hide"
+        panel.prompt = "Hide Applications"
+        panel.allowedContentTypes = [.applicationBundle]
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+        let apps = panel.urls.filter { $0.pathExtension == "app" }.map(\.standardizedFileURL.path)
+        guard !apps.isEmpty else { hiddenAppFeedback = "Choose one or more .app bundles."; return }
+        personalization.settings.hiddenApps = Array(Set(personalization.settings.hiddenApps + apps)).sorted()
+        hiddenAppFeedback = "Added \(apps.count) application\(apps.count == 1 ? "" : "s")."
+    }
+
+    private func appendPath(_ value: String, to keyPath: WritableKeyPath<PersonalizationSettings, [String]>) {
+        let path = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard path.hasPrefix("/") || path.hasPrefix("~/") else { folderFeedback = "Enter an absolute path or a path beginning with ~/."; return }
+        var values = personalization.settings[keyPath: keyPath]
+        let expanded = (path as NSString).expandingTildeInPath
+        guard FileManager.default.fileExists(atPath: expanded) else { folderFeedback = "This path is unavailable. Choose an existing folder or app."; return }
+        guard !values.contains(path) else { folderFeedback = "This path is already listed."; return }
+        values.append(path)
+        personalization.settings[keyPath: keyPath] = values.sorted()
+        folderFeedback = "Added \(path)."
+        pathDraft = ""
+    }
+
+    private func addExclusion() { appendPath(pathDraft, to: \.exclusions) }
+
+    private func resetSearchSettings() {
+        let defaults = PersonalizationSettings()
+        var settings = personalization.settings
+        settings.appsEnabled = defaults.appsEnabled
+        settings.filesEnabled = defaults.filesEnabled
+        settings.linksEnabled = defaults.linksEnabled
+        settings.commandsEnabled = defaults.commandsEnabled
+        settings.folders = defaults.folders
+        settings.exclusions = defaults.exclusions
+        settings.hiddenApps = defaults.hiddenApps
+        settings.emptyMode = defaults.emptyMode
+        personalization.settings = settings
+        for pin in personalization.pins { personalization.removePin(id: pin.id) }
+    }
+
+    private func resetAppearanceSettings() {
+        let defaults = PersonalizationSettings()
+        var settings = personalization.settings
+        settings.appearance = defaults.appearance
+        settings.textSize = defaults.textSize
+        settings.panelWidth = defaults.panelWidth
+        settings.compact = defaults.compact
+        settings.transparency = defaults.transparency
+        settings.placement = defaults.placement
+        settings.displayID = defaults.displayID
+        personalization.settings = settings
+    }
+
+    private func pinSymbol(_ kind: String) -> String {
+        switch kind {
+        case "application": "app.fill"
+        case "file": "doc"
+        case "quicklink": "link"
+        default: "terminal"
+        }
+    }
+
+    private func resetLink() { editingID = nil; linkName = ""; linkTarget = ""; linkKeyword = ""; linkError = nil }
+
+    private func startAppRecording(_ app: IndexedApplication) {
+        recordingCommandID = nil
+        recordingApp = app
+        shortcuts.recorderConflict = nil
+        shortcuts.suspend()
+        DispatchQueue.main.async { shortcutButtonFocus = "app:\(app.path)" }
+    }
+
+    private func stopAllRecordings() {
+        stopAppRecording()
+        stopCommandRecording()
+        stopLauncherRecording()
+    }
+
+    private func stopAppRecording() {
+        guard recordingApp != nil else { return }
+        recordingApp = nil
+        shortcuts.recorderConflict = nil
+        shortcuts.resume()
+    }
+
+    private func stopCommandRecording() {
+        guard recordingCommandID != nil else { return }
+        recordingCommandID = nil
+        commandShortcuts.recorderConflict = nil
+        commandShortcuts.resume()
+    }
+
+    private func stopLauncherRecording() {
+        guard recordingLauncherShortcut else { return }
+        recordingLauncherShortcut = false
+        shortcuts.resume()
+        commandShortcuts.resume()
+    }
+
+    private func recorderRow(title: String, cancel: @escaping () -> Void, record: @escaping (UInt32, UInt32, String) -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.callout.weight(.medium))
+            HStack(spacing: 10) {
+                ShortcutRecorder(record: record, cancel: cancel)
+                    .frame(width: 240, height: 30)
+                    .accessibilityLabel("Shortcut recorder")
+                    .accessibilityHint("\(title) Press Command, Option, or Control with a key. Press Escape to cancel.")
+                Spacer(minLength: 0)
+                Button("Cancel", action: cancel)
+            }
+        }
+        .padding(10)
+        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+    }
+
+    private func openAccessibilitySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func profileNameBinding(_ profile: ConfigurationProfile) -> Binding<String> {
+        Binding(get: { profileNameDrafts[profile.id] ?? profile.name }, set: { profileNameDrafts[profile.id] = $0 })
+    }
+
+    private func syncProfileDrafts() {
+        for profile in configuration.profiles where profileNameDrafts[profile.id] == nil {
+            profileNameDrafts[profile.id] = profile.name
+        }
+        profileNameDrafts = profileNameDrafts.filter { id, _ in configuration.profiles.contains(where: { $0.id == id }) }
+    }
+
+    private func renameProfile(_ profile: ConfigurationProfile) {
+        let name = profileNameDrafts[profile.id] ?? profile.name
+        performProfileAction { try configuration.renameProfile(id: profile.id, name: name) }
+        if profileFeedback == nil { profileNameDrafts[profile.id] = name.trimmingCharacters(in: .whitespacesAndNewlines) }
+    }
+
+    private func performProfileAction(_ operation: () throws -> Void) {
+        do { try operation(); profileFeedback = nil }
+        catch { profileFeedback = error.localizedDescription }
+    }
+
+    private func exportConfiguration(profileID: String?) {
+        do {
+            let data = try configuration.exportData(profileID: profileID)
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [.json]
+            panel.canCreateDirectories = true
+            panel.nameFieldStringValue = profileID == nil ? "Kebloop-configuration.json" : "Kebloop-profile.json"
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            try data.write(to: url, options: .atomic)
+            configurationFeedback = "Configuration exported to \(url.lastPathComponent)."
+        } catch { configurationFeedback = error.localizedDescription }
+    }
+
+    private func importConfiguration() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.title = "Import Kebloop Configuration"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            pendingPreview = try configuration.preview(data: Data(contentsOf: url))
+            configurationFeedback = "Review the import preview before applying it."
+        } catch { pendingPreview = nil; configurationFeedback = error.localizedDescription }
+    }
+
+    private func applyImport(_ preview: ConfigurationPreview, mode: ConfigurationImportMode) {
+        var backupURL: URL?
+        if mode == .replace {
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [.json]
+            panel.canCreateDirectories = true
+            panel.nameFieldStringValue = "Kebloop-configuration-backup.json"
+            panel.title = "Save Configuration Backup Before Replacing"
+            panel.prompt = "Save Backup and Replace"
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            backupURL = url
+        }
+        do {
+            try configuration.apply(preview: preview, mode: mode, backupURL: backupURL)
+            pendingPreview = nil
+            configurationFeedback = mode == .replace ? "Configuration replaced. Backup saved." : "Configuration merged."
+        } catch { configurationFeedback = error.localizedDescription }
+    }
+
+    @ViewBuilder private func errorText(_ message: String) -> some View {
+        Text(message).font(.caption).foregroundStyle(.red).accessibilityAddTraits(.updatesFrequently)
+    }
+}
+
+private enum SettingsSection: String, CaseIterable, Identifiable {
+    case general, search, appearance, quicklinks, appShortcuts, commandShortcuts, appleShortcuts, profiles, configuration, aliases, clipboard, help
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .general: String(localized: "General")
+        case .search: String(localized: "Search")
+        case .appearance: String(localized: "Appearance")
+        case .quicklinks: String(localized: "Quicklinks")
+        case .appShortcuts: String(localized: "App Shortcuts")
+        case .commandShortcuts: String(localized: "Command Shortcuts")
+        case .appleShortcuts: String(localized: "Apple Shortcuts")
+        case .profiles: String(localized: "Profiles")
+        case .configuration: String(localized: "Configuration")
+        case .aliases: String(localized: "Aliases")
+        case .clipboard: String(localized: "Clipboard")
+        case .help: String(localized: "Help")
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .general: "gearshape"
+        case .search: "magnifyingglass"
+        case .appearance: "paintbrush"
+        case .quicklinks: "link"
+        case .appShortcuts: "command"
+        case .commandShortcuts: "keyboard"
+        case .appleShortcuts: "square.stack.3d.up"
+        case .profiles: "person.crop.circle"
+        case .configuration: "square.and.arrow.up.on.square"
+        case .aliases: "text.magnifyingglass"
+        case .clipboard: "doc.on.clipboard"
+        case .help: "questionmark.circle"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .general: "Set your launcher shortcut, startup behavior, and AI handoff."
+        case .search: "Choose what Kebloop searches and manage indexed locations."
+        case .appearance: "Adjust the launcher’s look, size, and display placement."
+        case .quicklinks: "Manage saved links and keyword-based web searches."
+        case .appShortcuts: "Assign global shortcuts to your applications."
+        case .commandShortcuts: "Assign global shortcuts to commands and saved actions."
+        case .appleShortcuts: "Choose and run Apple Shortcuts from Kebloop."
+        case .profiles: "Keep separate sets of launcher preferences and saved items."
+        case .configuration: "Preview, import, and export Kebloop settings."
+        case .aliases: "Give applications additional names for search."
+        case .clipboard: "Control local clipboard history and saved items."
+        case .help: "Browse commands, examples, and your current shortcuts."
+        }
+    }
+}
+
+private enum SettingsSectionGroup: String, CaseIterable, Identifiable {
+    case preferences, shortcuts, personalization, data
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .preferences: "Preferences"
+        case .shortcuts: "Shortcuts"
+        case .personalization: "Personalization"
+        case .data: "Data & Help"
+        }
+    }
+    var sections: [SettingsSection] {
+        switch self {
+        case .preferences: [.general, .search, .appearance]
+        case .shortcuts: [.appShortcuts, .commandShortcuts, .appleShortcuts]
+        case .personalization: [.quicklinks, .aliases, .profiles]
+        case .data: [.configuration, .clipboard, .help]
+        }
+    }
+}
+
+private struct CommandShortcutTarget: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let symbol: String
+}
+
+private struct DisplayOption: Identifiable {
+    let id: String
+    let name: String
 }
 
 private struct AppAliasRow: View {
@@ -194,7 +1354,7 @@ private struct AppAliasRow: View {
             Group {
                 if let icon = index.icon(for: app) { Image(nsImage: icon).resizable() }
                 else { Image(systemName: "app.fill").resizable().foregroundStyle(.secondary) }
-            }.frame(width: 24, height: 24)
+            }.frame(width: 24, height: 24).accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(app.name)
                 if let error { Text(error).font(.caption).foregroundStyle(.red) }
@@ -203,13 +1363,16 @@ private struct AppAliasRow: View {
             TextField("Alias", text: $draft)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 180)
+                .accessibilityLabel("Alias for \(app.name)")
                 .onSubmit(save)
                 .onChange(of: aliases.alias(for: app) ?? "") { _, value in draft = value }
             Button("Save") { save() }
             if aliases.alias(for: app) != nil {
-                Button { aliases.remove(for: app); draft = ""; error = nil } label: {
+                Button(role: .destructive) { aliases.remove(for: app); draft = ""; error = nil } label: {
                     Image(systemName: "xmark.circle")
-                }.help("Remove alias")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Remove alias for \(app.name)")
             }
         }
     }
@@ -220,33 +1383,50 @@ private struct AppAliasRow: View {
     }
 }
 
-private struct ShortcutRecorder: NSViewRepresentable {
+struct ShortcutRecorder: NSViewRepresentable {
     var record: (UInt32, UInt32, String) -> Void
     var cancel: () -> Void
+
     func makeNSView(context: Context) -> ShortcutCaptureView {
         let view = ShortcutCaptureView()
         view.record = record
         view.cancel = cancel
-        DispatchQueue.main.async { view.window?.makeFirstResponder(view) }
+        view.setAccessibilityElement(true)
+        view.setAccessibilityRole(.textField)
+        view.setAccessibilityLabel("Shortcut recorder")
+        view.setAccessibilityHelp("Press Command, Option, or Control with a key. Press Escape to cancel.")
+        DispatchQueue.main.async {
+            view.previousFirstResponder = view.window?.firstResponder
+            view.window?.makeFirstResponder(view)
+        }
         return view
     }
-    func updateNSView(_ view: ShortcutCaptureView, context: Context) { view.record = record; view.cancel = cancel }
+
+    func updateNSView(_ view: ShortcutCaptureView, context: Context) {
+        view.record = record
+        view.cancel = cancel
+    }
+
     static func dismantleNSView(_ view: ShortcutCaptureView, coordinator: ()) {
-        if view.window?.firstResponder === view { view.window?.makeFirstResponder(nil) }
+        view.restoreFirstResponderIfNeeded()
         view.record = nil
         view.cancel = nil
     }
 }
 
-private final class ShortcutCaptureView: NSView {
+final class ShortcutCaptureView: NSView {
     var record: ((UInt32, UInt32, String) -> Void)?
     var cancel: (() -> Void)?
+    weak var previousFirstResponder: NSResponder?
     override var acceptsFirstResponder: Bool { true }
+    override var intrinsicContentSize: NSSize { NSSize(width: 1, height: 1) }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         guard window?.firstResponder === self else { return false }
         keyDown(with: event)
         return true
     }
+
     override func keyDown(with event: NSEvent) {
         if event.keyCode == UInt16(kVK_Escape) { cancel?(); return }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -260,5 +1440,14 @@ private final class ShortcutCaptureView: NSView {
         let special: [UInt16: String] = [UInt16(kVK_Space): "Space", UInt16(kVK_Return): "↩", UInt16(kVK_Tab): "⇥", UInt16(kVK_Delete): "⌫", UInt16(kVK_ForwardDelete): "⌦", UInt16(kVK_LeftArrow): "←", UInt16(kVK_RightArrow): "→", UInt16(kVK_UpArrow): "↑", UInt16(kVK_DownArrow): "↓"]
         let key = special[event.keyCode] ?? event.charactersIgnoringModifiers?.uppercased() ?? "Key \(event.keyCode)"
         record?(UInt32(event.keyCode), modifiers, label + " " + key)
+    }
+
+    func restoreFirstResponderIfNeeded() {
+        guard window?.firstResponder === self else { return }
+        if let previousFirstResponder {
+            window?.makeFirstResponder(previousFirstResponder)
+        } else {
+            window?.makeFirstResponder(nil)
+        }
     }
 }

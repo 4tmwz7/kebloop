@@ -28,6 +28,11 @@ final class AppAliasStore: ObservableObject {
         if cleaned != stored { defaults.set(cleaned, forKey: storageKey) }
     }
 
+    func reload() {
+        let restored = AppAliasStore(defaults: defaults, storageKey: storageKey)
+        aliases = restored.aliases
+    }
+
     func alias(for app: IndexedApplication) -> String? {
         aliases[app.path]
     }

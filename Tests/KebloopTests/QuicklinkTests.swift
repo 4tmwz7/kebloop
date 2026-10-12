@@ -35,3 +35,32 @@ final class QuicklinkTests: XCTestCase {
         XCTAssertTrue(QuicklinkStore(defaults: defaults).links.isEmpty)
     }
 }
+
+extension QuicklinkTests {
+    func testLegacyDecodeAndTemplateEncoding() throws {
+        let data = Data(#"{"id":"old","name":"Old","target":"https://example.com"}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(Quicklink.self, from: data).keyword, "")
+        let url = try XCTUnwrap(Quicklink.destination("https://example.com/?q={query}", argument: "Łódź & cats/+?#"))
+        XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first?.value, "Łódź & cats/+?#")
+        XCTAssertNil(Quicklink.destination("https://{query}.example.com"))
+        XCTAssertNil(Quicklink.destination("https://example.com/{unknown}"))
+        XCTAssertNil(Quicklink.destination("/tmp/{query}"))
+    }
+    @MainActor
+    func testKeywordConflictsAndExplicitResolution() throws {
+        let suite = "KebloopTemplates.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = QuicklinkStore(defaults: defaults)
+        XCTAssertNil(store.save(name: "GitHub", target: "https://github.com/search?q={query}", keyword: "gh"))
+        XCTAssertNotNil(store.save(name: "Conflict", target: "https://example.com", keyword: "GH"))
+        XCTAssertNotNil(store.saveWebSearch(name: "Conflict", keyword: "gh", target: "https://example.com/?q={query}"))
+        XCTAssertNotNil(store.saveWebSearch(name: "Invalid", keyword: "bad", target: "https://example.com"))
+        let resolved = try XCTUnwrap(store.resolve(query: "gh hello world"))
+        XCTAssertEqual(resolved.argument, "hello world")
+        XCTAssertEqual(resolved.link.keyword, "gh")
+        XCTAssertNil(store.resolve(query: "unknown query"))
+        XCTAssertNotNil(store.fallbackURL(query: "unknown query"))
+        XCTAssertEqual(QuicklinkStore(defaults: defaults).links.first?.keyword, "gh")
+    }
+}

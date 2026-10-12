@@ -85,6 +85,11 @@ final class FileSearchService: ObservableObject {
     @Published private(set) var isSearching = false
 
     private nonisolated static let performanceLog = OSLog(subsystem: "com.kebloop.launcher", category: .pointsOfInterest)
+    private var settings = PersonalizationSettings()
+    func configure(_ settings: PersonalizationSettings) {
+        guard self.settings != settings else { return }
+        stop(); cache = FileSearchCache(); self.settings = settings
+    }
     private var searchInterval: OSSignpostID?
     private var query: NSMetadataQuery?
     private var observers: [NSObjectProtocol] = []
@@ -98,7 +103,7 @@ final class FileSearchService: ObservableObject {
     func search(_ text: String) {
         stop()
         let searchText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !searchText.isEmpty else { return }
+        guard !searchText.isEmpty, settings.filesEnabled, !settings.folders.isEmpty else { return }
         isSearching = true
         let interval = OSSignpostID(log: Self.performanceLog)
         searchInterval = interval
@@ -137,7 +142,7 @@ final class FileSearchService: ObservableObject {
 
     private func start(_ text: String, generation: Int) {
         let query = NSMetadataQuery()
-        query.searchScopes = [NSMetadataQueryUserHomeScope]
+        query.searchScopes = settings.folders.map { ( $0 as NSString).expandingTildeInPath }
         // Filter packages and hidden paths inside Spotlight before bounded collection.
         var predicates = [NSPredicate(format: "%K CONTAINS[cd] %@", NSMetadataItemFSNameKey, text),
                           NSPredicate(format: "NOT (%K CONTAINS %@)", NSMetadataItemPathKey, "/."),
@@ -199,9 +204,12 @@ final class FileSearchService: ObservableObject {
         let request = FileFilterRequest()
         filterRequest = request
         let exclusions = exclusions
+        let excludedFolders = settings.exclusions
+        let folders = settings.folders
         filterQueue.async { [weak self] in
             guard !request.isCancelled else { return }
-            let visible = exclusions.filter(candidates, shouldCancel: { request.isCancelled })
+            let allowed = candidates.filter { candidate in folders.contains { PersonalizationStore.contains(candidate.path, in: $0) } && !excludedFolders.contains { PersonalizationStore.contains(candidate.path, in: $0) } }
+            let visible = exclusions.filter(allowed, shouldCancel: { request.isCancelled })
             guard !request.isCancelled else { return }
             var seen = Set<String>()
             let combined = (accumulated + visible).filter { seen.insert($0.id).inserted }

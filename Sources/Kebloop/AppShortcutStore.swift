@@ -16,32 +16,37 @@ final class AppShortcutStore: ObservableObject {
     @Published private(set) var bindings: [AppShortcutBinding]
     @Published private(set) var errors: [String: String] = [:]
     @Published var recorderConflict: String?
+    var isEnabled: (AppShortcutBinding) -> Bool = { _ in true }
     private let index: ApplicationIndex
     private let hotkey: HotkeyService
-    private var suspended = false
-    init(index: ApplicationIndex, hotkey: HotkeyService) {
+    private let defaults: UserDefaults
+    init(index: ApplicationIndex, hotkey: HotkeyService, defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         self.index = index
         self.hotkey = hotkey
-        bindings = UserDefaults.standard.data(forKey: "appShortcuts").flatMap { try? JSONDecoder().decode([AppShortcutBinding].self, from: $0) } ?? []
+        bindings = defaults.data(forKey: "appShortcuts").flatMap { try? JSONDecoder().decode([AppShortcutBinding].self, from: $0) } ?? []
         resume()
     }
     func suspend() {
-        suspended = true
-        hotkey.isSuspended = true
-        hotkey.suspendLauncher()
-        for binding in bindings { hotkey.unregisterBinding(id: binding.id) }
+        hotkey.beginRecording()
     }
     func resume() {
-        suspended = false
-        hotkey.isSuspended = false
-        hotkey.resumeLauncher()
+        unregisterAll()
         errors = [:]
         var registered = Set<String>()
-        for binding in bindings {
+        for binding in bindings where isEnabled(binding) {
             let combination = "\(binding.keyCode):\(binding.modifiers)"
             if !registered.insert(combination).inserted { errors[binding.id] = "This shortcut is already assigned to another app."; continue }
             register(binding)
         }
+        hotkey.endRecording()
+        for binding in bindings where hotkey.registrationErrors.contains(binding.id) { errors[binding.id] = "Shortcut unavailable. It may be used by macOS or another app." }
+    }
+    func unregisterAll() { for binding in bindings { hotkey.unregisterBinding(id: binding.id) } }
+    func reload(register: Bool = true) {
+        unregisterAll()
+        bindings = defaults.data(forKey: "appShortcuts").flatMap { try? JSONDecoder().decode([AppShortcutBinding].self, from: $0) } ?? []
+        if register { resume() }
     }
     @discardableResult
     func assign(app: IndexedApplication, keyCode: UInt32, modifiers: UInt32, label: String) -> Bool {
@@ -54,12 +59,13 @@ final class AppShortcutStore: ObservableObject {
         if let duplicate = bindings.first(where: { $0.appPath != app.path && $0.keyCode == keyCode && $0.modifiers == modifiers }) {
             recorderConflict = "Already assigned to \(duplicate.appName)."; return false
         }
+        guard !hotkey.conflictsWithBinding(id: app.path, keyCode: keyCode, modifiers: modifiers) else { recorderConflict = "Already assigned to an app or command."; return false }
         let binding = AppShortcutBinding(id: app.path, appPath: app.path, appName: app.name, keyCode: keyCode, modifiers: modifiers, label: label)
+        guard register(binding) else { recorderConflict = "Shortcut unavailable. It may be used by macOS or another app."; return false }
         if let offset = bindings.firstIndex(where: { $0.appPath == app.path }) { bindings[offset] = binding }
         else { bindings.append(binding) }
         recorderConflict = nil
         persist()
-        if !suspended { register(binding) }
         return true
     }
     func remove(id: String) {
@@ -68,7 +74,9 @@ final class AppShortcutStore: ObservableObject {
         errors.removeValue(forKey: id)
         persist()
     }
-    private func register(_ binding: AppShortcutBinding) {
+    @discardableResult
+    private func register(_ binding: AppShortcutBinding) -> Bool {
+        guard isEnabled(binding) else { hotkey.unregisterBinding(id: binding.id); errors[binding.id] = nil; return true }
         let success = hotkey.registerBinding(id: binding.id, keyCode: binding.keyCode, modifiers: binding.modifiers) { [weak self] in
             guard let self else { return }
             self.index.launch(IndexedApplication(name: binding.appName, path: binding.appPath)) { [weak self] error in
@@ -76,8 +84,9 @@ final class AppShortcutStore: ObservableObject {
             }
         }
         errors[binding.id] = success ? nil : "Shortcut unavailable. It may be used by macOS or another app."
+        return success
     }
     private func persist() {
-        if let data = try? JSONEncoder().encode(bindings) { UserDefaults.standard.set(data, forKey: "appShortcuts") }
+        if let data = try? JSONEncoder().encode(bindings) { defaults.set(data, forKey: "appShortcuts") }
     }
 }

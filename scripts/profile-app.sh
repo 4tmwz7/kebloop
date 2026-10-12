@@ -7,7 +7,9 @@ cd -- "$ROOT"
 KEBLOOP_PROFILE=1 swift test -c release --filter PerformanceTests
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf -- "$TEMP_DIR"' EXIT
-swiftc -O -swift-version 5 Sources/Kebloop/FileSearchService.swift \
+# The standalone benchmark needs result classification, not the app's preference stores.
+sed '/^\/\/ Shared with the worker queue/,$d' Sources/Kebloop/FileSearchService.swift > "$TEMP_DIR/FileSearchTypes.swift"
+swiftc -O -swift-version 5 "$TEMP_DIR/FileSearchTypes.swift" \
   Sources/Kebloop/FileSearchExclusions.swift scripts/performance/FileVisibilityBenchmark.swift \
   -o "$TEMP_DIR/file-visibility"
 /usr/bin/time -l "$TEMP_DIR/file-visibility"

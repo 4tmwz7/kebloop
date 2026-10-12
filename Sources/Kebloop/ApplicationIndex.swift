@@ -18,6 +18,7 @@ final class ApplicationIndex: ObservableObject {
     @Published private(set) var isRefreshing = false
     @Published private(set) var iconRevision = 0
 
+    var searchEnabled = true { didSet { if !searchEnabled { iconWarmupTask?.cancel() } } }
     private let iconCache = NSCache<NSString, NSImage>()
     private var pendingIconPaths = Set<String>()
     private var iconWarmupTask: Task<Void, Never>?
@@ -43,7 +44,7 @@ final class ApplicationIndex: ObservableObject {
     }
 
     func refresh() {
-        guard !isRefreshing else { return }
+        guard searchEnabled, !isRefreshing else { return }
         isRefreshing = true
 
         let roots = Self.applicationRoots
@@ -59,13 +60,13 @@ final class ApplicationIndex: ObservableObject {
                 }
                 self.isRefreshing = false
                 self.lastRefreshCompletedAt = Date()
-                self.warmIcons(for: discovered)
+                if self.searchEnabled { self.warmIcons(for: discovered) }
             }
         }
     }
 
     func refreshIfNeeded() {
-        guard !isRefreshing else { return }
+        guard searchEnabled, !isRefreshing else { return }
         guard Self.isRefreshDue(
             lastCompletedAt: lastRefreshCompletedAt,
             now: Date(),

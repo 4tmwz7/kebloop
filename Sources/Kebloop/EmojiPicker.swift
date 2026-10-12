@@ -60,7 +60,9 @@ private final class EmojiPickerModel: ObservableObject {
 private struct EmojiPickerView: View {
     @ObservedObject var model: EmojiPickerModel
     let choose: (EmojiEntry) -> Void
+    let close: () -> Void
     @FocusState private var searchFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let columns = Array(repeating: GridItem(.fixed(42), spacing: 4), count: 8)
 
@@ -95,6 +97,12 @@ private struct EmojiPickerView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Clear search")
                 }
+                Button(action: close) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close emoji picker")
             }
             .padding(.horizontal, 16)
             .frame(height: 52)
@@ -118,6 +126,9 @@ private struct EmojiPickerView: View {
                                 }
                         }
                         .buttonStyle(.plain)
+                        .accessibilityValue(model.selectedCategory == category ? "Selected" : "")
+                        .accessibilityAddTraits(model.selectedCategory == category ? .isSelected : [])
+                        .accessibilityHint("Filters emoji by category.")
                     }
                 }
                 .padding(.horizontal, 12)
@@ -160,7 +171,8 @@ private struct EmojiPickerView: View {
                 }
                 .onChange(of: model.selectedEntry?.id) { _, selectedID in
                     guard let selectedID else { return }
-                    withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(selectedID, anchor: .center) }
+                    if reduceMotion { proxy.scrollTo(selectedID, anchor: .center) }
+                    else { withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(selectedID, anchor: .center) } }
                 }
             }
         }
@@ -175,6 +187,7 @@ private struct EmojiPickerView: View {
             .tracking(0.5)
             .foregroundStyle(.tertiary)
             .padding(.leading, 2)
+            .accessibilityAddTraits(.isHeader)
     }
 
     private func emojiButton(_ entry: EmojiEntry) -> some View {
@@ -191,6 +204,9 @@ private struct EmojiPickerView: View {
         .buttonStyle(.plain)
         .help("\(entry.name) — \(entry.symbol)")
         .accessibilityLabel("\(entry.name), \(entry.symbol)")
+        .accessibilityValue(isSelected ? "Selected for copying" : "")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityHint("Press Return or click to copy this emoji.")
     }
 }
 
@@ -199,11 +215,13 @@ private struct EmojiPickerView: View {
 public final class EmojiPickerController: NSWindowController, NSWindowDelegate {
     private let pickerModel = EmojiPickerModel()
     private let onCopy: (() -> Void)?
+    private let onDismiss: (() -> Void)?
     private var keyboardMonitor: Any?
     private var outsideMonitor: Any?
 
-    public init(onCopy: (() -> Void)? = nil) {
+    public init(onCopy: (() -> Void)? = nil, onDismiss: (() -> Void)? = nil) {
         self.onCopy = onCopy
+        self.onDismiss = onDismiss ?? onCopy
         let panel = EmojiPickerPanel(
             contentRect: NSRect(x: 0, y: 0, width: 468, height: 492),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -213,8 +231,9 @@ public final class EmojiPickerController: NSWindowController, NSWindowDelegate {
         super.init(window: panel)
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
+        let reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+        panel.isOpaque = reduceTransparency
+        panel.backgroundColor = reduceTransparency ? .windowBackgroundColor : .clear
         panel.hasShadow = true
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
@@ -229,15 +248,19 @@ public final class EmojiPickerController: NSWindowController, NSWindowDelegate {
                 self.dismiss()
                 return nil
             case 125:
+                if event.modifierFlags.contains([.control, .option]) { return event }
                 self.pickerModel.moveSelection(by: 8)
                 return nil
             case 126:
+                if event.modifierFlags.contains([.control, .option]) { return event }
                 self.pickerModel.moveSelection(by: -8)
                 return nil
             case 124:
+                if event.modifierFlags.contains([.control, .option]) { return event }
                 self.pickerModel.moveSelection(by: 1)
                 return nil
             case 123:
+                if event.modifierFlags.contains([.control, .option]) { return event }
                 self.pickerModel.moveSelection(by: -1)
                 return nil
             case 36, 76:
@@ -274,7 +297,9 @@ public final class EmojiPickerController: NSWindowController, NSWindowDelegate {
     }
 
     public func dismiss() {
-        window?.orderOut(nil)
+        guard let window, window.isVisible else { return }
+        window.orderOut(nil)
+        onDismiss?()
     }
 
     public func windowDidResignKey(_ notification: Notification) {
@@ -285,14 +310,14 @@ public final class EmojiPickerController: NSWindowController, NSWindowDelegate {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(entry.symbol, forType: .string)
         pickerModel.select(entry)
-        dismiss()
+        if let window, window.isVisible { window.orderOut(nil) }
         onCopy?()
     }
 
     private func installView(in panel: NSPanel) {
         let hosting = NSHostingView(rootView: EmojiPickerView(model: pickerModel, choose: { [weak self] entry in
             self?.copy(entry)
-        }))
+        }, close: { [weak self] in self?.dismiss() }))
         hosting.translatesAutoresizingMaskIntoConstraints = false
         if #available(macOS 26.0, *) {
             let glass = NSGlassEffectView()

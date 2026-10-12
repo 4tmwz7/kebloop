@@ -46,3 +46,11 @@ The standalone visibility benchmark’s repeated baseline runs took 2,111–2,15
 The initial 48 MiB icon cost budget incorrectly counted all native image representations and could immediately evict a single icon. It was removed after the missing-icon regression was reproduced. The cache keeps its 128-image count limit and 32-image warmup; the measurements above describe the earlier profiling revision and should be re-run for the icon fix.
 
 A [single follow-up run with icons restored](performance/icon-fix-results.json) measured 126.25 MiB peak process RSS, 1.245 s workload CPU, and 0.077 ms median navigation. Query median was 5.570 ms and p95 12.258 ms; the original query-latency improvement should not be assumed with icons restored.
+
+## Milestones 1–2 follow-up
+
+A single release profile after the personalization/workflow implementation on the same arm64 macOS 27 machine measured query median **5.445 ms**, p95 **11.925 ms**, navigation median **0.081 ms**, workload CPU **1.426 s**, and peak RSS **130.41 MiB**. The standalone visibility benchmark took **635.63 ms**. Raw results are in [milestones-1-2-results.json](performance/milestones-1-2-results.json).
+
+Compared with the single icons-restored sample, query and navigation latency remain similar; workload CPU increased from 1.245 s to 1.426 s and RSS from 126.25 to 130.41 MiB. The empty launcher now includes more built-in commands, so the workload renders more rows. First show measured 120.16 ms and index readiness 429.62 ms; startup remains sensitive to desktop and cache state. This is one local sample, not a cross-machine performance guarantee. The profile supplies isolated personalization and Apple Shortcuts stores and does not run user automations.
+
+A follow-up after the custom action panel and Settings redesign measured query median **6.217 ms**, p95 **13.570 ms**, navigation median **0.080 ms**, workload CPU **1.328 s**, and peak RSS **130.27 MiB**. The file visibility benchmark took **612.83 ms**. This single sample has somewhat higher query latency than the milestone sample, with lower workload CPU and similar memory/navigation; no systematic speedup is claimed. Raw results are in [actions-settings-results.json](performance/actions-settings-results.json).
