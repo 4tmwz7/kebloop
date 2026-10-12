@@ -21,6 +21,7 @@ Type a command name in the launcher, then press Return:
 | Quicklinks | Browse saved links. Links also appear directly in root search by name. |
 | Emoji & Symbols | Open the searchable emoji grid with categories and recents; click or Return copies an emoji. Arrow keys navigate. |
 | Open Settings | Configure Kebloop without using its menu-bar icon. |
+| Shut Down… | Type `shutdown`, `power off`, or `turn off`, then Return to open the macOS shutdown confirmation. Confirm there to turn off your Mac, or cancel. |
 
 Within clipboard and quicklink search, Escape or the back button returns to root search. Lists scroll; arrow navigation keeps the selected row visible.
 

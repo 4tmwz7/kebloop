@@ -52,13 +52,14 @@ private enum LauncherMode: String {
 }
 
 private enum LauncherCommand: String, CaseIterable {
-    case clipboard, quicklinks, emoji, settings
+    case clipboard, quicklinks, emoji, settings, shutdown
     var title: String {
         switch self {
         case .clipboard: return "Clipboard History"
         case .quicklinks: return "Quicklinks"
         case .emoji: return "Emoji & Symbols"
         case .settings: return "Open Settings"
+        case .shutdown: return "Shut Down…"
         }
     }
     var symbol: String {
@@ -67,7 +68,11 @@ private enum LauncherCommand: String, CaseIterable {
         case .quicklinks: return "link"
         case .emoji: return "face.smiling"
         case .settings: return "gearshape"
+        case .shutdown: return "power"
         }
+    }
+    var aliases: [String] {
+        self == .shutdown ? ["shutdown", "power off", "turn off"] : []
     }
 }
 
@@ -467,6 +472,7 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
             }
             let appAliases: [String]
             if case .application(let app) = result, let alias = aliases.alias(for: app) { appAliases = [alias] }
+            else if case .command(let command) = result { appAliases = command.aliases }
             else { appAliases = [] }
             return AppSearchEntry(id: result.id, name: name, path: "", aliases: appAliases)
         }
@@ -523,7 +529,11 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
             case .command(let command):
                 icon = NSImage(systemSymbolName: command.symbol, accessibilityDescription: nil)
                 title = command.title
-                subtitle = command == .settings ? "Preferences and shortcuts" : "Command"
+                switch command {
+                case .settings: subtitle = "Preferences and shortcuts"
+                case .shutdown: subtitle = "Shows macOS shutdown confirmation"
+                default: subtitle = "Command"
+                }
                 action = "Open"
             case .quicklink(let link):
                 icon = NSImage(systemSymbolName: "link", accessibilityDescription: nil)
@@ -670,6 +680,14 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
             case .quicklinks: enter(.quicklinks)
             case .emoji: onEmoji?()
             case .settings: onSettings?()
+            case .shutdown:
+                do {
+                    try ShutdownService.requestConfirmation()
+                    dismiss(restoreFocus: false)
+                } catch {
+                    message = "Couldn’t show shutdown confirmation: \(error.localizedDescription)"
+                    render()
+                }
             }
         case .quicklink(let link):
             guard let url = link.url, NSWorkspace.shared.open(url) else {

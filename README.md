@@ -16,6 +16,7 @@ Open apps, find files, run calculations, and reach your clipboard, quicklinks, a
 - **Clipboard history** for up to 200 text entries, with sensitive clipboard types excluded.
 - **Quicklinks** for websites, files, and folders.
 - **Emoji picker** with search, categories, and recents.
+- **Shut down your Mac** by typing `shutdown` and opening the macOS confirmation.
 - **AI handoff** to ChatGPT, Claude, or Siri using your existing apps and accounts.
 - **Native appearance** with Liquid Glass on macOS 26+ and popover material on older releases.
 
@@ -74,6 +75,8 @@ These are local development builds, not notarized distribution releases. A stabl
 | Send a query to your AI provider | Tab |
 
 Type **Clipboard History**, **Quicklinks**, **Emoji & Symbols**, or **Open Settings** to open a command. You can change the launcher shortcut in Settings.
+
+Type **shutdown** (or **power off** / **turn off**) and press Return to open the macOS shutdown confirmation. Confirm there to turn off your Mac, or cancel to keep working.
 
 Launch at login is enabled on first launch, subject to macOS approval. Manage it in Settings → General. **Command-Q hides the interface**; use **Quit Kebloop** in the menu-bar menu to exit.
 
