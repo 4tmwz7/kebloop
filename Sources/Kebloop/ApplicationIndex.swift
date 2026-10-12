@@ -1,0 +1,208 @@
+import AppKit
+import Combine
+import Foundation
+import KebloopCore
+
+struct IndexedApplication: Codable, Hashable, Identifiable, Sendable {
+    let name: String
+    let path: String
+
+    var id: String { path }
+    var url: URL { URL(fileURLWithPath: path) }
+    var searchEntry: AppSearchEntry { AppSearchEntry(id: id, name: name, path: path) }
+}
+
+@MainActor
+final class ApplicationIndex: ObservableObject {
+    @Published private(set) var applications: [IndexedApplication]
+    @Published private(set) var isRefreshing = false
+    @Published private(set) var iconRevision = 0
+
+    private let iconCache = NSCache<NSString, NSImage>()
+    private var pendingIconPaths = Set<String>()
+    private var iconWarmupTask: Task<Void, Never>?
+    private var refreshTimer: Timer?
+
+    init() {
+        applications = Self.loadCache()
+        warmIcons(for: applications)
+        refresh()
+
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 5 * 60, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refresh()
+            }
+        }
+    }
+
+    deinit {
+        refreshTimer?.invalidate()
+    }
+
+    func refresh() {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+
+        let roots = Self.applicationRoots
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let discovered = Self.scanApplications(in: roots)
+            Self.persistCache(discovered)
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if self.applications != discovered {
+                    self.applications = discovered
+                }
+                self.isRefreshing = false
+                self.warmIcons(for: discovered)
+            }
+        }
+    }
+
+    func icon(for app: IndexedApplication) -> NSImage? {
+        let cacheKey = app.path as NSString
+        if let cached = iconCache.object(forKey: cacheKey) {
+            return cached
+        }
+
+        guard pendingIconPaths.insert(app.path).inserted else { return nil }
+
+        let path = app.path
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let loaded = self.cacheIcon(at: path)
+            self.pendingIconPaths.remove(path)
+            if loaded { self.iconRevision &+= 1 }
+        }
+
+        return nil
+    }
+
+    @discardableResult
+    private func cacheIcon(at path: String) -> Bool {
+        let key = path as NSString
+        guard iconCache.object(forKey: key) == nil else { return false }
+
+        // Preserve the workspace image's native representations. TIFF conversion
+        // can fail for lazily loaded icons and discards newer system icon variants.
+        // AppKit image lookup and use both stay on the main actor.
+        let image = NSWorkspace.shared.icon(forFile: path)
+        iconCache.setObject(image, forKey: key)
+        return true
+    }
+
+    private func warmIcons(for applications: [IndexedApplication]) {
+        iconWarmupTask?.cancel()
+        let paths = applications.map(\.path)
+        iconWarmupTask = Task(priority: .utility) { @MainActor [weak self] in
+            for path in paths {
+                guard !Task.isCancelled, let self else { return }
+                guard self.cacheIcon(at: path) else { continue }
+                self.iconRevision &+= 1
+                // Load one icon per turn so keyboard input gets time to run.
+                do {
+                    try await Task.sleep(for: .milliseconds(5))
+                } catch {
+                    return
+                }
+            }
+        }
+    }
+
+    func launch(_ app: IndexedApplication, completion: @escaping (Error?) -> Void) {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.openApplication(at: app.url, configuration: configuration) { _, error in
+            DispatchQueue.main.async {
+                completion(error)
+            }
+        }
+    }
+
+    private nonisolated static var applicationRoots: [URL] {
+        [
+            URL(fileURLWithPath: "/Applications", isDirectory: true),
+            URL(fileURLWithPath: "/System/Applications", isDirectory: true),
+            URL(fileURLWithPath: "/System/Cryptexes/App/System/Applications", isDirectory: true),
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true)
+        ]
+    }
+
+    private nonisolated static func scanApplications(in roots: [URL]) -> [IndexedApplication] {
+        var applicationsByPath: [String: IndexedApplication] = [:]
+        let keys: [URLResourceKey] = [.isDirectoryKey]
+
+        for root in roots {
+            guard let enumerator = FileManager.default.enumerator(
+                at: root,
+                includingPropertiesForKeys: keys,
+                options: [.skipsHiddenFiles, .skipsPackageDescendants],
+                errorHandler: { _, _ in true }
+            ) else { continue }
+
+            while let url = enumerator.nextObject() as? URL {
+                guard url.pathExtension.caseInsensitiveCompare("app") == .orderedSame else { continue }
+                enumerator.skipDescendants()
+                guard (try? url.resourceValues(forKeys: Set(keys)).isDirectory) == true else { continue }
+
+                let standardizedURL = url.standardizedFileURL
+                let path = standardizedURL.path
+                let bundle = Bundle(url: standardizedURL)
+                if bundle?.object(forInfoDictionaryKey: "LSBackgroundOnly") as? Bool == true {
+                    continue
+                }
+                let displayName = bundle?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+                    ?? bundle?.object(forInfoDictionaryKey: "CFBundleName") as? String
+                let name = displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .nilIfEmpty ?? standardizedURL.deletingPathExtension().lastPathComponent
+
+                applicationsByPath[path] = IndexedApplication(name: name, path: path)
+            }
+        }
+
+        return applicationsByPath.values.sorted {
+            let order = $0.name.localizedStandardCompare($1.name)
+            if order != .orderedSame { return order == .orderedAscending }
+            return $0.path < $1.path
+        }
+    }
+
+    private nonisolated static func loadCache() -> [IndexedApplication] {
+        guard let cacheURL = cacheFileURL,
+              let data = try? Data(contentsOf: cacheURL),
+              let cached = try? JSONDecoder().decode([IndexedApplication].self, from: data) else {
+            return []
+        }
+
+        return cached.sorted {
+            let order = $0.name.localizedStandardCompare($1.name)
+            if order != .orderedSame { return order == .orderedAscending }
+            return $0.path < $1.path
+        }
+    }
+
+    private nonisolated static func persistCache(_ applications: [IndexedApplication]) {
+        guard let cacheURL = cacheFileURL,
+              let data = try? JSONEncoder().encode(applications) else { return }
+
+        do {
+            try FileManager.default.createDirectory(
+                at: cacheURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: cacheURL, options: .atomic)
+        } catch {
+            // The live index remains useful if cache storage is unavailable.
+        }
+    }
+
+    private nonisolated static var cacheFileURL: URL? {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("Kebloop", isDirectory: true)
+            .appendingPathComponent("application-index.json", isDirectory: false)
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
+}
