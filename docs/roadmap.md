@@ -1,6 +1,6 @@
 # Kebloop feature roadmap
 
-Status: milestones 1–2 implemented; native acceptance verification pending as noted below. Updated: 2026-10-12.
+Status: milestones 1–4 implemented; native acceptance verification pending as noted below. Updated: 2026-10-12.
 
 This roadmap turns the feature proposals into implementation chunks. Each chunk should be delivered and verified independently. Check a chunk only when its acceptance criteria are met, and record any follow-up work here.
 
@@ -127,6 +127,8 @@ The order is a recommendation, not a requirement to finish every earlier milesto
 - **Scope:** Add pinned entries, configurable age/count retention, exclusions by source app, and a timed recording pause. Define whether pinned entries expire; make the policy visible. Extend existing sensitive-content exclusions.
 - **Acceptance:** Expired entries are removed from memory and persisted storage. Pauses survive relaunch until their deadline. Excluded source apps are not recorded where attribution is reliable; document attribution limits. Clear History explicitly explains whether it includes pinned items. Existing history migrates safely.
 - **Dependencies:** 02 for pin actions, 07 for privacy explanations. Keep these controls global across profiles.
+- **Delivery (2026-10-12):** [Clipboard retention/privacy](../Sources/Kebloop/ClipboardHistoryStore.swift) adds migration, global count/age limits, persistent pauses, source exclusions, and 50 age/count-exempt pins. Tests cover persistence and cleanup; source attribution is approximate foreground-app polling.
+
 
 ### 12 — Snippets and reusable text
 
@@ -134,13 +136,17 @@ The order is a recommendation, not a requirement to finish every earlier milesto
 - **Scope:** Add named, searchable text snippets with explicit placeholders, preview, copy, and optional insertion. Start with launcher-triggered snippets; do not add global keystroke monitoring for automatic expansion.
 - **Acceptance:** Placeholder values render predictably and cancel safely. Snippets export/import with configuration. Copy works without additional permissions. Optional insertion explains its permission needs and retains a copy fallback.
 - **Dependencies:** 05–07. Reuse input conventions from 08 where useful.
+- **Delivery (2026-10-12):** [Snippets](../Sources/Kebloop/SnippetStore.swift) and [editor/preview](../Sources/Kebloop/SnippetView.swift) add named searchable text, explicit placeholders, cancellation, copy and Accessibility-dependent paste fallback. Profile/configuration and command-shortcut integration are covered by tests; native permission/focus verification remains pending.
+
 
 ### 13 — Unit conversion and date calculations
 
-- [ ] Complete
+- [x] Complete
 - **Scope:** Extend inline calculation with a documented set of length, mass, temperature, and data units, plus date differences and date addition. Support locale-aware input and output without changing existing expression semantics unexpectedly.
 - **Acceptance:** Tests cover unit aliases, incompatible dimensions, temperature offsets, decimal commas, ambiguous dates, time zones, and daylight-saving transitions. Incomplete input stays quiet; valid output remains copyable. Document supported syntax. Currency conversion requires a separate rate-source/cache/offline design and is deferred.
 - **Dependencies:** None; can run independently of UI work.
+- **Delivery (2026-10-12):** [Unit](../Sources/KebloopCore/UnitConversionEngine.swift) and [date](../Sources/KebloopCore/DateCalculationEngine.swift) engines preserve expression evaluation and cover aliases, dimensions, offsets, decimal commas, locale dates, time zones, DST, and incomplete input. [Syntax](conversions.md) is documented; currencies remain deferred.
+
 
 ### 14 — Localization and keyboard-layout support
 
@@ -148,6 +154,8 @@ The order is a recommendation, not a requirement to finish every earlier milesto
 - **Scope:** Extract user-facing strings, then add English and Polish as the initial languages. Add localized command aliases and help examples. Audit input-method composition, non-US keyboard layouts, shortcut labels, and locale formatting.
 - **Acceptance:** Commands remain searchable by stable English names and localized aliases. Input-method composition does not trigger actions prematurely. Longer translated strings fit. Shortcuts display and record correctly on tested layouts. Add a documented process for future community translations.
 - **Dependencies:** 05 and 07. Coordinate conversion grammar with 13; add right-to-left layout verification before shipping a right-to-left language.
+- **Delivery (2026-10-12):** [Packaged English/Polish catalogs](../Sources/Kebloop/Resources) and [lookup](../Sources/Kebloop/Localization.swift) localize static UI, with additive Polish command aliases and a [translation process](localization.md). IME action guards and event-based keyboard labels are retained. Native layout/IME/VoiceOver audits remain pending; dynamic diagnostics may retain English.
+
 
 ### 15 — Images and rich text in clipboard history
 
@@ -155,6 +163,8 @@ The order is a recommendation, not a requirement to finish every earlier milesto
 - **Scope:** Add image thumbnails and rich-text preservation alongside plain-text entries. Introduce byte-based storage limits, lazy previews, format-aware copying, and migration/cleanup for attachment files.
 - **Acceptance:** Copying restores appropriate pasteboard formats. Large images cannot exhaust storage or stall search. Sensitive-type exclusions apply to every format. Deleting, clearing, and expiring entries removes associated files. Test persistence and recovery from missing/corrupt attachments.
 - **Dependencies:** 11. This is a separate chunk because its storage model is larger than text-only history.
+- **Delivery (2026-10-12):** [Clipboard attachments](../Sources/Kebloop/ClipboardHistoryStore.swift) preserve images/RTF/HTML, provide lazy bounded thumbnails, 5 MiB per-entry/50 MiB aggregate budgets, and file cleanup/recovery. Tests cover formats, missing/corrupt attachments, limits, deletion, expiration, and legacy migration.
+
 
 ### 16 — User script commands
 
@@ -162,6 +172,8 @@ The order is a recommendation, not a requirement to finish every earlier milesto
 - **Scope:** Add user-selected scripts with metadata (stable ID, title, description, arguments, executable/runtime), launcher invocation, output preview, cancellation, timeouts, and actionable errors. Provide templates and a command management view.
 - **Acceptance:** Scripts run off the UI thread; output and runtime are bounded. Pass arguments as process arguments, not interpolated shell source. Missing runtimes, nonzero exits, and cancellation are handled. Users review imported scripts before enabling execution. Importing configuration never runs code. Secrets stay out of configuration exports and logs.
 - **Dependencies:** 02, 05–07. Document that local scripts execute with the user's privileges; a metadata permission declaration is not a sandbox.
+- **Delivery (2026-10-12):** [Script store](../Sources/Kebloop/ScriptCommandStore.swift), [process runner](../Sources/Kebloop/AutomationProcess.swift), and [management/output views](../Sources/Kebloop/AutomationViews.swift) provide explicit review/enable, literal arguments, bounded output, timeouts, cancellation, and process-group cleanup. Imported scripts never run or enable automatically. [Templates/trust model](automation.md) and regression tests are included.
+
 
 ### 17 — Small extension API
 
@@ -169,6 +181,8 @@ The order is a recommendation, not a requirement to finish every earlier milesto
 - **Scope:** Use lessons from scripts and Shortcuts to define a versioned interface for search results, actions, preferences, and native list/detail views. Add an extension manifest, lifecycle rules, developer examples, and enable/disable/remove controls.
 - **Acceptance:** A sample extension can contribute results and actions without changing launcher code. Crashes and slow extensions do not freeze built-in search. Compatibility errors are clear. Define isolation, trust, file/network access, and credential storage before shipping third-party execution. Verify that any claimed permission restrictions are actually enforced.
 - **Dependencies:** 09 and 16, with real workflow feedback. Choose the runtime in a design checkpoint; do not commit to a JavaScript/React runtime prematurely. A public marketplace is separate future work.
+- **Delivery (2026-10-12):** [Extension API](../Sources/Kebloop/ExtensionStore.swift) uses version 1 subprocess JSON for results/actions/preferences and native list/detail views, with enable/disable/remove and compatibility/lifecycle validation. [Sample extension](../examples/automation/greeting-extension.swift) works without launcher edits. Five-second/output/result bounds protect the UI; full user privileges and unsupported credential fields are explicit. Native interaction verification remains pending.
+
 
 ### 18 — Signed and notarized distribution
 
@@ -199,4 +213,20 @@ The release test suite passes 96 tests (two opt-in timing tests skipped). The se
 
 ## Starting point
 
-Milestones 1–2 have implementation and regression coverage. Complete the remaining native acceptance checks listed in their delivery notes before marking the outstanding checkboxes. Then continue with milestone 3; reassess priorities based on actual use.
+Milestones 1–2 have implementation and regression coverage. Complete the remaining native acceptance checks listed in their delivery notes before marking the outstanding checkboxes. Milestones 3–4 are now implemented below; complete native coverage gaps before release.
+
+## Milestones 3–4 delivery
+
+Implemented chunks 11–17 on 2026-10-12. Clipboard controls and attachment storage remain global. Snippets and automation metadata participate in profile/configuration round trips; imported executable metadata is disabled in every profile pending review. The initial extension runtime checkpoint selected versioned subprocess JSON with native list/detail/action views and an explicit full-user-privilege trust model; credentials and a marketplace are outside this API.
+
+Native acceptance checkboxes remain open where VoiceOver, IME, non-US layout, large translated text, and permission-prompt verification are required. English/Polish static UI catalogs are packaged; dynamic diagnostics and external content may retain their source language. Core conversion/date syntax is covered by deterministic locale/time-zone/DST tests. See [usage](usage.md), [conversion grammar](conversions.md), [localization coverage](localization.md), and [automation API](automation.md).
+
+### Milestones 3–4 validation
+
+The initial release suite passes 128 tests (two opt-in timing tests skipped), including clipboard migration/attachments/retention, snippets, localization catalog parity, launcher integration, conversions/date/DST, and automation lifecycle/import review. The separately enabled release AppKit profile passes; [performance results](performance.md#milestones-34-follow-up) record this run. The packaged app builds and passes signature verification with its localization resource bundle included.
+
+Native smoke checks verified the new commands in root search, `1 km to m` displaying `1000 m`, and `ustawienia` finding Open Settings. The native automation pipe then closed while opening Settings, and reconnect/reset attempts failed; the app process remained running with no crash report. Settings navigation, actual insertion permissions, VoiceOver speech, non-US shortcut recording, Polish layout/IME, and real script/extension interaction are therefore still pending native acceptance, rather than inferred from tests. Imported code execution was tested with isolated synthetic stores and local fixtures.
+
+### Feature verification follow-up
+
+The requested feature-by-feature verification adds clipboard Remove Item to ⌘K and passes 153 release tests with zero failures (two timing tests skipped). It also fixes oversized derived plain text suppressing valid clipboard attachments, stale extension state after update/reload, and snippet preview abort being treated as Copy. The real sample script and extension run successfully; the separately enabled performance profile passes. See the [full feature matrix and native coverage limits](feature-verification.md).

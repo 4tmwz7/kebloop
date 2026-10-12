@@ -7,6 +7,7 @@ struct ActionMenuItem: Identifiable {
     var id: String { action.rawValue }
     var symbol: String {
         switch action {
+        case .removeClipboardItem: "trash"
         case .open: "arrow.up.forward"
         case .reveal: "folder"
         case .copyPath: "doc.on.doc"
@@ -46,7 +47,7 @@ final class ActionMenuController: NSObject, ObservableObject, NSWindowDelegate {
         menu.backgroundColor = .clear; menu.isOpaque = false; menu.hasShadow = true
         menu.level = parent.level; menu.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         menu.appearance = parent.appearance; menu.delegate = self
-        menu.setAccessibilityLabel(String(localized: "Result Actions"))
+        menu.setAccessibilityLabel(L("Result Actions"))
         menu.contentView = NSHostingView(rootView: ActionMenuView(controller: self, resultTitle: title, opaque: opaque))
         let area = parent.screen?.visibleFrame ?? parent.frame
         let origin = NSPoint(x: min(max(parent.frame.maxX - size.width - 10, area.minX), area.maxX - size.width),
@@ -118,18 +119,18 @@ private struct ActionMenuView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("Actions").font(.system(size: 13, weight: .semibold))
+                Text(L("Actions")).font(.system(size: 13, weight: .semibold))
                 Text(resultTitle).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
             }.padding(.horizontal, 14).padding(.vertical, 12)
             Divider().padding(.horizontal, 8)
             VStack(spacing: 2) {
                 ForEach(Array(controller.items.enumerated()), id: \.element.id) { index, item in
-                    Button { controller.choose(index) } label: {
+                    Button(role: item.action == .removeClipboardItem ? .destructive : nil) { controller.choose(index) } label: {
                         HStack(spacing: 10) {
                             Image(systemName: item.symbol).frame(width: 18).foregroundStyle(.secondary)
                             Text(item.title).font(.system(size: 13, weight: controller.selectedIndex == index ? .medium : .regular))
                             Spacer(minLength: 4)
-                            if controller.selectedIndex == index { Text("↵").font(.system(size: 12)).foregroundStyle(.secondary) }
+                            if controller.selectedIndex == index { Text(L("↵")).font(.system(size: 12)).foregroundStyle(.secondary) }
                         }.padding(.horizontal, 10).frame(height: 38)
                             .contentShape(Rectangle())
                             .background(controller.selectedIndex == index ? Color.primary.opacity(contrast == .increased ? 0.2 : 0.09) : .clear, in: RoundedRectangle(cornerRadius: 7))
@@ -144,7 +145,7 @@ private struct ActionMenuView: View {
             }.padding(6)
             Divider().padding(.horizontal, 8)
             HStack {
-                Text("↑ ↓ to navigate"); Spacer(); Text("esc to close")
+                Text(L("↑ ↓ to navigate")); Spacer(); Text(L("esc to close"))
             }.font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 14).padding(.vertical, 9)
         }
         .frame(width: 310)

@@ -55,6 +55,9 @@ BUILT_EXECUTABLE="$BIN_PATH/Kebloop"
 
 mkdir -p -- "$STAGED_APP/Contents/MacOS" "$STAGED_APP/Contents/Resources"
 cp -- "$BUILT_EXECUTABLE" "$STAGED_APP/Contents/MacOS/Kebloop"
+for resource_bundle in "$BIN_PATH"/Kebloop_Kebloop.bundle; do
+  [[ ! -d "$resource_bundle" ]] || cp -R -- "$resource_bundle" "$STAGED_APP/Contents/Resources/"
+done
 cp -- "$REPO_ROOT/assets/Info.plist" "$STAGED_APP/Contents/Info.plist"
 
 SIGNING_IDENTITY="${KEBLOOP_SIGNING_IDENTITY:-}"

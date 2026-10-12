@@ -4,25 +4,31 @@ import Combine
 
 // Raw values are persisted identifiers; keep them stable across releases.
 enum LauncherCommand: String, CaseIterable, Identifiable {
-    case clipboard, quicklinks, emoji, settings, shutdown, browse, help, onboarding, profiles, webSearch, appleShortcuts
+    case snippets, scripts, extensions, clipboard, quicklinks, emoji, settings, shutdown, browse, help, onboarding, profiles, webSearch, appleShortcuts
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .clipboard: String(localized: "Clipboard History")
-        case .quicklinks: String(localized: "Quicklinks")
-        case .emoji: String(localized: "Emoji & Symbols")
-        case .settings: String(localized: "Open Settings")
-        case .shutdown: String(localized: "Shut Down…")
-        case .browse: String(localized: "Browse Commands")
-        case .help: String(localized: "Help")
-        case .onboarding: String(localized: "Welcome to Kebloop")
-        case .profiles: String(localized: "Profiles")
-        case .webSearch: String(localized: "Web Search")
-        case .appleShortcuts: String(localized: "Apple Shortcuts")
+        case .snippets: L("Snippets")
+        case .scripts: L("Script Commands")
+        case .extensions: L("Extensions")
+        case .clipboard: L("Clipboard History")
+        case .quicklinks: L("Quicklinks")
+        case .emoji: L("Emoji & Symbols")
+        case .settings: L("Open Settings")
+        case .shutdown: L("Shut Down…")
+        case .browse: L("Browse Commands")
+        case .help: L("Help")
+        case .onboarding: L("Welcome to Kebloop")
+        case .profiles: L("Profiles")
+        case .webSearch: L("Web Search")
+        case .appleShortcuts: L("Apple Shortcuts")
         }
     }
     var symbol: String {
         switch self {
+        case .snippets: "text.quote"
+        case .scripts: "terminal"
+        case .extensions: "puzzlepiece.extension"
         case .clipboard: "doc.on.clipboard"
         case .quicklinks: "link"
         case .emoji: "face.smiling"
@@ -38,17 +44,20 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
     }
     var aliases: [String] {
         switch self {
-        case .clipboard: ["clipboard", "history", "paste"]
-        case .quicklinks: ["quicklinks", "links", "bookmarks"]
-        case .emoji: ["emoji", "symbols", "emoji & symbols"]
-        case .settings: ["settings", "preferences", "open settings"]
-        case .shutdown: ["shutdown", "shut down", "power off", "turn off"]
-        case .browse: ["browse", "commands", "all commands"]
-        case .help: ["help", "guide"]
-        case .onboarding: ["welcome", "onboarding", "tutorial"]
-        case .profiles: ["profiles", "switch profile"]
-        case .webSearch: ["web search", "search web"]
-        case .appleShortcuts: ["apple shortcuts", "shortcuts", "automation"]
+        case .snippets: ["snippets", "text", "fragmenty", "tekst"]
+        case .scripts: ["scripts", "script commands", "skrypty"]
+        case .extensions: ["extensions", "rozszerzenia"]
+        case .clipboard: ["schowek", "historia", "clipboard", "history", "paste"]
+        case .quicklinks: ["linki", "zakładki", "quicklinks", "links", "bookmarks"]
+        case .emoji: ["emotikony", "symbole", "emoji", "symbols", "emoji & symbols"]
+        case .settings: ["ustawienia", "preferencje", "settings", "preferences", "open settings"]
+        case .shutdown: ["wyłącz", "zamknij komputer", "shutdown", "shut down", "power off", "turn off"]
+        case .browse: ["polecenia", "przeglądaj", "browse", "commands", "all commands"]
+        case .help: ["pomoc", "poradnik", "help", "guide"]
+        case .onboarding: ["witaj", "samouczek", "welcome", "onboarding", "tutorial"]
+        case .profiles: ["profile", "przełącz profil", "profiles", "switch profile"]
+        case .webSearch: ["szukaj w sieci", "wyszukiwarka", "web search", "search web"]
+        case .appleShortcuts: ["skróty", "automatyzacja", "apple shortcuts", "shortcuts", "automation"]
         }
     }
 }

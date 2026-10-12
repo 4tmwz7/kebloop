@@ -28,7 +28,7 @@ final class PerformanceTests: XCTestCase {
                                                storageURL: directory.appendingPathComponent("history.json"))
         let launcher = LauncherPanelController(index: index, quicklinks: links, clipboard: clipboard,
             aliases: AppAliasStore(defaults: defaults), ai: AIHandoffService(defaults: defaults, pasteboard: pasteboard),
-            personalization: PersonalizationStore(defaults: defaults), appleShortcuts: AppleShortcutsService(defaults: defaults))
+            personalization: PersonalizationStore(defaults: defaults), appleShortcuts: AppleShortcutsService(defaults: defaults), snippets: SnippetStore(defaults: defaults), scripts: ScriptCommandStore(defaults: defaults), extensions: ExtensionStore(defaults: defaults))
         launcher.show()
         let firstShow = (ProcessInfo.processInfo.systemUptime - start) * 1000
         for _ in 0..<300 {

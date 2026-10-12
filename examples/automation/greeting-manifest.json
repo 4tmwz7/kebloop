@@ -1,0 +1,10 @@
+{
+  "id": "example.greeting",
+  "name": "Greeting example",
+  "description": "A local version 1 extension with list, detail, action and preference examples.",
+  "apiVersion": 1,
+  "executable": "/usr/bin/swift",
+  "arguments": ["/REPLACE/WITH/ABSOLUTE/PATH/greeting-extension.swift"],
+  "preferences": [{"id": "prefix", "title": "Greeting prefix", "defaultValue": "Hello"}],
+  "enabled": false
+}

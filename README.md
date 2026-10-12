@@ -96,3 +96,7 @@ swift test -c release
 - [Performance profiling](docs/performance.md): repeatable latency, CPU, and memory measurements.
 - [Project plan](PLAN.md): scope and acceptance targets.
 - [Feature roadmap](docs/roadmap.md): next features, implementation chunks, dependencies, and acceptance criteria.
+
+Milestones 3–4 add clipboard retention/privacy/pins and image/rich-text history, reusable snippets, unit/date calculations, English/Polish UI resources, reviewed local script commands, and a versioned subprocess extension API. See [usage](docs/usage.md), [conversion syntax](docs/conversions.md), [automation examples/API](docs/automation.md), and [validation status](docs/roadmap.md).
+
+See the [feature-by-feature verification report](docs/feature-verification.md) for test coverage and remaining native UI checks.

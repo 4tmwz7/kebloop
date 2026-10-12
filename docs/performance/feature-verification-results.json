@@ -1,0 +1,13 @@
+{
+  "application_count": 117,
+  "first_show_ms": 89.72354166689911,
+  "idle_cpu_percent": 0.2074200000000026,
+  "index_ready_ms": 427.13516666663054,
+  "navigation_p50_ms": 0.08058333332883194,
+  "navigation_p95_ms": 0.10412499977974221,
+  "peak_rss_mib": 131.984375,
+  "query_p50_ms": 4.824999999982538,
+  "query_p95_ms": 12.716458333670744,
+  "workload_cpu_seconds": 1.386861,
+  "workload_wall_seconds": 1.4902278333329377
+}

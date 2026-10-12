@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 import XCTest
 @testable import Kebloop
 
@@ -59,6 +60,327 @@ final class ClipboardHistoryTests: XCTestCase {
         fixture.store.poll()
         XCTAssertEqual(fixture.store.items.map(\.text), ["normal text"])
         await settleStorage()
+    }
+
+    func testSensitiveMarkerSuppressesEveryAdvertisedFormat() throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        fixture.pasteboard.clearContents()
+        fixture.pasteboard.setString("sensitive plain text", forType: .string)
+        fixture.pasteboard.setData(Data("{\\rtf1 private}".utf8), forType: NSPasteboard.PasteboardType(rawValue: "public.rtf"))
+        fixture.pasteboard.setData(try makePNG(), forType: NSPasteboard.PasteboardType(rawValue: UTType.png.identifier))
+        fixture.pasteboard.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
+        fixture.store.poll()
+        XCTAssertTrue(fixture.store.items.isEmpty)
+    }
+
+    func testLegacyTextOnlyHistoryMigratesWithUnpinnedDefaults() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let legacyJSON = #"[{"id":"legacy","text":"saved before rich formats","date":0}]"#
+        try Data(legacyJSON.utf8).write(to: fixture.storageURL)
+        let recovered = ClipboardHistoryStore(defaults: fixture.defaults, pasteboard: fixture.pasteboard,
+                                              storageURL: fixture.storageURL, sourceApplicationProvider: { nil })
+        await settleStorage()
+        let entry = try XCTUnwrap(recovered.items.first)
+        XCTAssertEqual(entry.id, "legacy")
+        XCTAssertFalse(entry.isPinned)
+        XCTAssertNil(entry.imageAttachment)
+        XCTAssertNil(entry.richTextAttachment)
+    }
+
+    func testTimedPauseSurvivesRelauchAndSkipsTheClipboardAtResume() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+
+        fixture.store.pauseRecording(for: 60)
+        let deadline = try XCTUnwrap(fixture.defaults.object(forKey: "clipboardHistoryPauseUntil") as? Date)
+        XCTAssertGreaterThan(deadline, Date())
+        fixture.write("copied during pause")
+        fixture.store.poll()
+        XCTAssertTrue(fixture.store.items.isEmpty)
+
+        let relaunched = ClipboardHistoryStore(defaults: fixture.defaults, pasteboard: fixture.pasteboard,
+                                               storageURL: fixture.storageURL, sourceApplicationProvider: { nil })
+        XCTAssertTrue(relaunched.isPaused)
+        relaunched.poll()
+        XCTAssertTrue(relaunched.items.isEmpty)
+
+        relaunched.resumeRecording()
+        relaunched.poll()
+        XCTAssertTrue(relaunched.items.isEmpty, "Resuming must not backfill content copied during the pause")
+        fixture.write("copied after resume")
+        relaunched.poll()
+        XCTAssertEqual(relaunched.items.map(\.text), ["copied after resume"])
+        XCTAssertNil(fixture.defaults.object(forKey: "clipboardHistoryPauseUntil"))
+        await settleStorage()
+    }
+
+    func testExpiredPauseDeadlineIsClearedAndRecordingResumesAfterRelaunch() throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        fixture.defaults.set(Date(timeIntervalSinceNow: -1), forKey: "clipboardHistoryPauseUntil")
+        let relaunched = ClipboardHistoryStore(defaults: fixture.defaults, pasteboard: fixture.pasteboard,
+                                               storageURL: fixture.storageURL, sourceApplicationProvider: { nil })
+        XCTAssertFalse(relaunched.isPaused)
+        XCTAssertNil(fixture.defaults.object(forKey: "clipboardHistoryPauseUntil"))
+        fixture.write("recorded after expired pause")
+        relaunched.poll()
+        XCTAssertEqual(relaunched.items.map(\.text), ["recorded after expired pause"])
+    }
+
+    func testAgeAndCountRetentionKeepPinsUntilClear() async throws {
+        let now = Date()
+        let pinned = ClipboardEntry(id: "pinned", text: "keep this", date: now.addingTimeInterval(-10 * 86_400), isPinned: true)
+        let old = ClipboardEntry(id: "old", text: "expire this", date: now.addingTimeInterval(-10 * 86_400))
+        let fixture = try makeFixture(initialEntries: [pinned, old])
+        defer { fixture.cleanup() }
+        // Change settings before the asynchronous disk read publishes its snapshot.
+        fixture.store.maximumAgeDays = 3
+        fixture.store.maximumItemCount = 1
+        await settleStorage()
+        XCTAssertEqual(fixture.store.items.map(\.id), ["pinned"])
+
+        fixture.write("new item")
+        fixture.store.poll()
+        fixture.write("newer item")
+        fixture.store.poll()
+        XCTAssertEqual(Set(fixture.store.items.map(\.id)).count, 2)
+        XCTAssertTrue(fixture.store.items.contains(where: \.isPinned))
+        XCTAssertEqual(fixture.store.items.filter { !$0.isPinned }.count, 1)
+        XCTAssertTrue(fixture.store.setPinned(false, for: "pinned"))
+        fixture.store.maximumAgeDays = 0
+        fixture.store.maximumItemCount = 1
+        XCTAssertEqual(fixture.store.items.filter { !$0.isPinned }.count, 1)
+        fixture.store.clear()
+        await settleStorage()
+        XCTAssertTrue(fixture.store.items.isEmpty, "Clear History includes pinned items")
+    }
+
+    func testAgeExpirationDeletesExpiredAttachmentFiles() async throws {
+        let richText = makeRichText(byteCount: 64)
+        let attachmentName = "clipboard-expired.bin"
+        let expiredEntry = ClipboardEntry(
+            id: "expired-rich-text",
+            text: "old content",
+            date: Date(timeIntervalSinceNow: -2 * 86_400),
+            richTextAttachment: ClipboardAttachment(fileName: attachmentName, pasteboardType: "public.rtf",
+                                                    byteCount: richText.count, kind: .richText)
+        )
+        let fixture = try makeFixture(initialEntries: [expiredEntry], initialAttachments: [attachmentName: richText])
+        defer { fixture.cleanup() }
+        await settleStorage()
+        XCTAssertTrue(fixture.store.items.contains(where: { $0.id == expiredEntry.id }))
+
+        fixture.store.maximumAgeDays = 1
+        XCTAssertFalse(fixture.store.items.contains(where: { $0.id == expiredEntry.id }))
+        await settleStorage()
+        let attachments = fixture.storageURL.deletingPathExtension().appendingPathComponent("attachments")
+        XCTAssertTrue((try? FileManager.default.contentsOfDirectory(at: attachments, includingPropertiesForKeys: nil).isEmpty) ?? true)
+        XCTAssertTrue(try JSONDecoder().decode([ClipboardEntry].self, from: Data(contentsOf: fixture.storageURL)).isEmpty)
+    }
+
+    func testExcludedSourceApplicationIsSkipped() async throws {
+        let fixture = try makeFixture(sourceBundleIdentifier: "com.example.private-app")
+        defer { fixture.cleanup() }
+        fixture.store.excludedSourceBundleIDs = ["com.example.private-app"]
+        fixture.write("do not retain")
+        fixture.store.poll()
+        XCTAssertTrue(fixture.store.items.isEmpty)
+
+        fixture.store.excludedSourceBundleIDs = []
+        fixture.write("retain this")
+        fixture.store.poll()
+        XCTAssertEqual(fixture.store.items.first?.sourceBundleIdentifier, "com.example.private-app")
+        XCTAssertEqual(fixture.store.items.map(\.text), ["retain this"])
+        await settleStorage()
+    }
+
+    func testImageAndRichTextPersistCopyAndCleanUpAttachments() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let png = try makePNG()
+        let rtf = Data("{\\rtf1\\ansi Rich \\b text}".utf8)
+        fixture.pasteboard.clearContents()
+        fixture.pasteboard.setString("plain text", forType: .string)
+        fixture.pasteboard.setData(rtf, forType: NSPasteboard.PasteboardType(rawValue: "public.rtf"))
+        fixture.pasteboard.setData(png, forType: NSPasteboard.PasteboardType(rawValue: UTType.png.identifier))
+        fixture.store.poll()
+
+        let entry = try XCTUnwrap(fixture.store.items.first)
+        XCTAssertEqual(entry.preview, "plain text")
+        XCTAssertEqual(fixture.store.imageData(for: entry), png)
+        XCTAssertEqual(fixture.store.richTextData(for: entry), rtf)
+        let thumbnailData = await fixture.store.imageThumbnailData(for: entry, maximumPixelSize: 1)
+        let thumbnail = try XCTUnwrap(thumbnailData)
+        XCTAssertNotNil(NSImage(data: thumbnail))
+        XCTAssertTrue(fixture.store.setPinned(true, for: entry.id))
+        await settleStorage()
+
+        let attachmentDirectory = fixture.storageURL.deletingPathExtension().appendingPathComponent("attachments")
+        let filesBeforeCopy = try FileManager.default.contentsOfDirectory(at: attachmentDirectory, includingPropertiesForKeys: nil)
+        XCTAssertEqual(filesBeforeCopy.count, 2)
+        fixture.store.copy(entry)
+        XCTAssertEqual(fixture.pasteboard.string(forType: .string), "plain text")
+        XCTAssertEqual(fixture.pasteboard.data(forType: NSPasteboard.PasteboardType(rawValue: "public.rtf")), rtf)
+        XCTAssertEqual(fixture.pasteboard.data(forType: NSPasteboard.PasteboardType(rawValue: UTType.png.identifier)), png)
+
+        let relaunched = ClipboardHistoryStore(defaults: fixture.defaults, pasteboard: fixture.pasteboard,
+                                               storageURL: fixture.storageURL, sourceApplicationProvider: { nil })
+        await settleStorage()
+        let restored = try XCTUnwrap(relaunched.items.first)
+        XCTAssertTrue(restored.isPinned)
+        XCTAssertEqual(relaunched.imageData(for: restored), png)
+        XCTAssertEqual(relaunched.richTextData(for: restored), rtf)
+
+        relaunched.clear()
+        await settleStorage()
+        XCTAssertTrue((try? FileManager.default.contentsOfDirectory(at: attachmentDirectory, includingPropertiesForKeys: nil).isEmpty) ?? true)
+    }
+
+    func testHTMLClipboardFormatPersistsAndCopiesWithoutChangingItsType() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let html = Data("<p><strong>Rich HTML</strong></p>".utf8)
+        fixture.pasteboard.clearContents()
+        fixture.pasteboard.setString("Rich HTML", forType: .string)
+        XCTAssertTrue(fixture.pasteboard.setData(html, forType: NSPasteboard.PasteboardType(rawValue: "public.html")))
+        fixture.store.poll()
+
+        let entry = try XCTUnwrap(fixture.store.items.first)
+        XCTAssertEqual(entry.text, "Rich HTML")
+        XCTAssertEqual(entry.richTextAttachment?.pasteboardType, "public.html")
+        XCTAssertEqual(fixture.store.richTextData(for: entry), html)
+        await settleStorage()
+
+        let relaunched = ClipboardHistoryStore(defaults: fixture.defaults, pasteboard: fixture.pasteboard,
+                                               storageURL: fixture.storageURL, sourceApplicationProvider: { nil })
+        await settleStorage()
+        let restored = try XCTUnwrap(relaunched.items.first)
+        XCTAssertEqual(relaunched.richTextData(for: restored), html)
+        relaunched.copy(restored)
+        XCTAssertEqual(fixture.pasteboard.data(forType: NSPasteboard.PasteboardType(rawValue: "public.html")), html)
+        XCTAssertNil(fixture.pasteboard.data(forType: NSPasteboard.PasteboardType(rawValue: "public.rtf")))
+    }
+
+    func testRemoveDeletesAttachmentsAndClearDeletesSubsequentAttachments() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let attachmentDirectory = fixture.storageURL.deletingPathExtension().appendingPathComponent("attachments")
+        fixture.pasteboard.clearContents()
+        fixture.pasteboard.setString("remove me", forType: .string)
+        fixture.pasteboard.setData(makeRichText(byteCount: 64), forType: NSPasteboard.PasteboardType(rawValue: "public.rtf"))
+        fixture.store.poll()
+        let removed = try XCTUnwrap(fixture.store.items.first)
+        fixture.store.remove(id: removed.id)
+        await settleStorage()
+        XCTAssertTrue((try? FileManager.default.contentsOfDirectory(at: attachmentDirectory, includingPropertiesForKeys: nil).isEmpty) ?? true)
+
+        fixture.pasteboard.clearContents()
+        fixture.pasteboard.setString("clear me", forType: .string)
+        fixture.pasteboard.setData(makeRichText(byteCount: 64), forType: NSPasteboard.PasteboardType(rawValue: "public.rtf"))
+        fixture.store.poll()
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(at: attachmentDirectory, includingPropertiesForKeys: nil).count, 1)
+        fixture.store.clear()
+        await settleStorage()
+        XCTAssertTrue((try? FileManager.default.contentsOfDirectory(at: attachmentDirectory, includingPropertiesForKeys: nil).isEmpty) ?? true)
+    }
+
+    func testRichTextAttachmentPerEntryLimitAndAggregateByteBudget() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let attachmentDirectory = fixture.storageURL.deletingPathExtension().appendingPathComponent("attachments")
+        let limit = 5 * 1024 * 1024
+        let maximumEntry = makeRichText(byteCount: limit)
+
+        for index in 0..<10 {
+            fixture.pasteboard.clearContents()
+            XCTAssertTrue(fixture.pasteboard.setData(maximumEntry, forType: NSPasteboard.PasteboardType(rawValue: "public.rtf")))
+            XCTAssertEqual(fixture.pasteboard.data(forType: NSPasteboard.PasteboardType(rawValue: "public.rtf"))?.count, limit)
+            fixture.store.poll()
+            XCTAssertEqual(fixture.store.items.count, index + 1)
+            XCTAssertEqual(fixture.store.items.first?.richTextAttachment?.byteCount, limit)
+        }
+        XCTAssertEqual(fixture.store.items.reduce(0) { $0 + ($1.richTextAttachment?.byteCount ?? 0) }, 50 * 1024 * 1024)
+
+        fixture.pasteboard.clearContents()
+        fixture.pasteboard.setData(maximumEntry, forType: NSPasteboard.PasteboardType(rawValue: "public.rtf"))
+        fixture.store.poll()
+        XCTAssertEqual(fixture.store.items.count, 10, "The next attachment must be skipped when the 50 MiB aggregate budget is full")
+
+        fixture.pasteboard.clearContents()
+        fixture.pasteboard.setString("keep plain text", forType: .string)
+        fixture.pasteboard.setData(makeRichText(byteCount: limit + 1), forType: NSPasteboard.PasteboardType(rawValue: "public.rtf"))
+        fixture.store.poll()
+        XCTAssertEqual(fixture.store.items.count, 11)
+        XCTAssertEqual(fixture.store.items.first?.text, "keep plain text")
+        XCTAssertNil(fixture.store.items.first?.richTextAttachment, "An oversized format is skipped while its bounded plain text remains useful")
+        await settleStorage()
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(at: attachmentDirectory, includingPropertiesForKeys: nil).count, 10)
+    }
+
+    func testPinnedEntryLimitReleasesSlotAfterUnpinning() throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        for index in 0..<51 {
+            fixture.write("pin candidate \(index)")
+            fixture.store.poll()
+        }
+        XCTAssertEqual(fixture.store.items.count, 51)
+        let pinnedIDs = fixture.store.items.prefix(50).map(\.id)
+        for id in pinnedIDs { XCTAssertTrue(fixture.store.setPinned(true, for: id)) }
+        let unpinnedID = try XCTUnwrap(fixture.store.items.last?.id)
+        XCTAssertFalse(fixture.store.setPinned(true, for: unpinnedID))
+        XCTAssertEqual(fixture.store.items.filter(\.isPinned).count, 50)
+        XCTAssertTrue(fixture.store.setPinned(false, for: pinnedIDs[0]))
+        XCTAssertTrue(fixture.store.setPinned(true, for: unpinnedID))
+        XCTAssertEqual(fixture.store.items.filter(\.isPinned).count, 50)
+    }
+
+    func testMissingOrCorruptAttachmentIsRemovedDuringRecovery() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let attachmentDirectory = fixture.storageURL.deletingPathExtension().appendingPathComponent("attachments")
+        try FileManager.default.createDirectory(at: attachmentDirectory, withIntermediateDirectories: true)
+        let corruptName = "clipboard-corrupt.bin"
+        try Data("not an image".utf8).write(to: attachmentDirectory.appendingPathComponent(corruptName))
+        let missingName = "clipboard-missing.bin"
+        let entries = [
+            ClipboardEntry(id: "corrupt", text: "", date: Date(), imageAttachment: ClipboardAttachment(
+                fileName: corruptName, pasteboardType: UTType.png.identifier, byteCount: 12, kind: .image)),
+            ClipboardEntry(id: "missing", text: "still useful text", date: Date(), richTextAttachment: ClipboardAttachment(
+                fileName: missingName, pasteboardType: "public.rtf", byteCount: 20, kind: .richText))
+        ]
+        try JSONEncoder().encode(entries).write(to: fixture.storageURL)
+
+        let recovered = ClipboardHistoryStore(defaults: fixture.defaults, pasteboard: fixture.pasteboard,
+                                              storageURL: fixture.storageURL, sourceApplicationProvider: { nil })
+        await settleStorage()
+        XCTAssertEqual(recovered.items.map(\.id), ["missing"])
+        XCTAssertNil(recovered.items.first?.richTextAttachment)
+        await settleStorage()
+        let saved = try JSONDecoder().decode([ClipboardEntry].self, from: Data(contentsOf: fixture.storageURL))
+        XCTAssertEqual(saved.map(\.id), ["missing"])
+    }
+
+    func testRecoveryRejectsAttachmentWhoseOnDiskSizeDisagreesWithMetadata() async throws {
+        let attachmentName = "clipboard-size-mismatch.bin"
+        let validRTF = makeRichText(byteCount: 64)
+        let entry = ClipboardEntry(id: "size-mismatch", text: "plain text survives", date: Date(), richTextAttachment: ClipboardAttachment(
+            fileName: attachmentName, pasteboardType: "public.rtf", byteCount: validRTF.count - 1, kind: .richText))
+        let fixture = try makeFixture(initialEntries: [entry], initialAttachments: [attachmentName: validRTF])
+        defer { fixture.cleanup() }
+
+        let recovered = ClipboardHistoryStore(defaults: fixture.defaults, pasteboard: fixture.pasteboard,
+                                              storageURL: fixture.storageURL, sourceApplicationProvider: { nil })
+        await settleStorage()
+        let restored = try XCTUnwrap(recovered.items.first)
+        XCTAssertEqual(restored.id, "size-mismatch")
+        XCTAssertEqual(restored.text, "plain text survives")
+        XCTAssertNil(restored.richTextAttachment)
+        await settleStorage()
+        let saved = try JSONDecoder().decode([ClipboardEntry].self, from: Data(contentsOf: fixture.storageURL))
+        XCTAssertNil(saved.first?.richTextAttachment)
     }
 
     func testClearPreventsPendingLoadFromRestoringHistory() async throws {
@@ -167,19 +489,54 @@ final class ClipboardHistoryTests: XCTestCase {
         try? await Task.sleep(for: .milliseconds(150))
     }
 
-    private func makeFixture(initialClipboard: String? = nil, initialEntries: [ClipboardEntry]? = nil) throws -> Fixture {
+    private func makeFixture(
+        initialClipboard: String? = nil,
+        initialEntries: [ClipboardEntry]? = nil,
+        initialAttachments: [String: Data] = [:],
+        maximumAgeDays: Int = 0,
+        maximumItemCount: Int = 200,
+        sourceBundleIdentifier: String? = nil
+    ) throws -> Fixture {
         let suite = "KebloopTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defaults.set(true, forKey: "clipboardHistoryEnabled")
+        defaults.set(maximumAgeDays, forKey: "clipboardHistoryMaximumAgeDays")
+        defaults.set(maximumItemCount, forKey: "clipboardHistoryMaximumItemCount")
         let pasteboard = NSPasteboard(name: NSPasteboard.Name(suite))
         if let initialClipboard { pasteboard.setString(initialClipboard, forType: .string) }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let storageURL = directory.appendingPathComponent("history.json")
         if let initialEntries { try JSONEncoder().encode(initialEntries).write(to: storageURL) }
-        let store = ClipboardHistoryStore(defaults: defaults, pasteboard: pasteboard, storageURL: storageURL)
+        if !initialAttachments.isEmpty {
+            let attachmentDirectory = storageURL.deletingPathExtension().appendingPathComponent("attachments", isDirectory: true)
+            try FileManager.default.createDirectory(at: attachmentDirectory, withIntermediateDirectories: true)
+            for (fileName, data) in initialAttachments {
+                try data.write(to: attachmentDirectory.appendingPathComponent(fileName))
+            }
+        }
+        let store = ClipboardHistoryStore(defaults: defaults, pasteboard: pasteboard, storageURL: storageURL,
+                                          sourceApplicationProvider: { sourceBundleIdentifier })
         return Fixture(store: store, pasteboard: pasteboard, defaults: defaults, suite: suite,
                        directory: directory, storageURL: storageURL)
+    }
+
+    private func makePNG() throws -> Data {
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
+                                                    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                                    isPlanar: false, colorSpaceName: .deviceRGB,
+                                                    bytesPerRow: 0, bitsPerPixel: 0))
+        bitmap.setColor(NSColor(calibratedRed: 1, green: 0, blue: 0, alpha: 1), atX: 0, y: 0)
+        return try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+    }
+
+    private func makeRichText(byteCount: Int) -> Data {
+        let prefix = Data("{\\rtf1 ".utf8)
+        precondition(byteCount > prefix.count)
+        var data = prefix
+        data.append(Data(repeating: 0x20, count: byteCount - prefix.count - 1))
+        data.append(0x7D)
+        return data
     }
 }
 

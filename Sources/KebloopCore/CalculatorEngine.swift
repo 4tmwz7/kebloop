@@ -24,7 +24,15 @@ public struct CalculatorEngine {
     private static let maximumInputLength = 512
     private static let maximumTokenCount = 256
 
-    public init() {}
+    private let locale: Locale
+    private let timeZone: TimeZone
+    private let referenceDate: Date?
+
+    public init(locale: Locale = .current, timeZone: TimeZone = .current, referenceDate: Date? = nil) {
+        self.locale = locale
+        self.timeZone = timeZone
+        self.referenceDate = referenceDate
+    }
 
     public func evaluate(_ input: String) -> CalculationOutcome {
         let expression = input.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -33,6 +41,31 @@ public struct CalculatorEngine {
         if expression.count > Self.maximumInputLength {
             return .failure("Expression is too long.")
         }
+
+        let dateCalculator = DateCalculationEngine(locale: locale, timeZone: timeZone)
+        switch dateCalculator.evaluate(expression, now: referenceDate ?? Date()) {
+        case .notHandled:
+            break
+        case .incomplete:
+            return .incomplete
+        case .result(let display):
+            return .result(CalculationResult(expression: expression, display: display, clipboard: display))
+        case .failure(let message):
+            return .failure(message)
+        }
+
+        let conversionCalculator = UnitConversionEngine(locale: locale)
+        switch conversionCalculator.evaluate(expression) {
+        case .notHandled:
+            break
+        case .incomplete:
+            return .incomplete
+        case .result(let display):
+            return .result(CalculationResult(expression: expression, display: display, clipboard: display))
+        case .failure(let message):
+            return .failure(message)
+        }
+
         guard Self.looksLikeMath(expression) else { return .none }
 
         do {

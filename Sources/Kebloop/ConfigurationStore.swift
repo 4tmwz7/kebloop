@@ -17,9 +17,15 @@ struct PortableSettings: Codable {
     var selectedAppleShortcuts: [AppleShortcut] = []
     var personalization = PersonalizationSettings()
     var pins: [PinnedResult] = []
+    var snippets: [Snippet]? = nil
+    var scripts: [ScriptCommand]? = nil
+    var extensions: [ExtensionManifest]? = nil
 
     func validate() throws {
         try personalization.validate()
+        for command in scripts ?? [] { try command.validate() }; try unique((scripts ?? []).map(\.id))
+        for manifest in extensions ?? [] { try manifest.validate() }; try unique((extensions ?? []).map(\.id))
+        for snippet in snippets ?? [] { try snippet.validate() }; try unique((snippets ?? []).map(\.id))
         guard let launcher = launcherShortcutID == "custom" ? launcherCustomShortcut : Shortcut.choices.first(where: { $0.id == launcherShortcutID }), launcher.keyCode <= 127, launcher.modifiers & 0x1900 != 0 else { throw ConfigurationError.invalid("Unknown launcher shortcut.") }
         guard !appShortcuts.contains(where: { $0.keyCode == launcher.keyCode && $0.modifiers == launcher.modifiers }),
               !commandShortcuts.contains(where: { $0.keyCode == launcher.keyCode && $0.modifiers == launcher.modifiers }) else { throw ConfigurationError.invalid("A command or application shortcut conflicts with the launcher.") }
@@ -38,7 +44,8 @@ struct PortableSettings: Codable {
         try unique(keywords.map { $0.lowercased() })
         try unique(quicklinks.map(\.id)); try unique(webSearches.map(\.id)); try unique(pins.map(\.id))
         try unique(appShortcuts.map(\.id)); try unique(commandShortcuts.map(\.id)); try unique(selectedAppleShortcuts.map(\.id))
-        let commandIDs = Set(LauncherCommand.allCases.map(\.id) + selectedAppleShortcuts.map { "apple:\($0.id)" } + quicklinks.map { "link:\($0.id)" })
+        let automationIDs = (scripts ?? []).map(\.commandID) + (extensions ?? []).map(\.commandID)
+        let commandIDs = Set(automationIDs + (snippets ?? []).map { "snippet:\($0.id)" } + LauncherCommand.allCases.map(\.id) + selectedAppleShortcuts.map { "apple:\($0.id)" } + quicklinks.map { "link:\($0.id)" })
         guard commandShortcuts.allSatisfy({ commandIDs.contains($0.id) }),
               appShortcuts.allSatisfy({ $0.appPath.hasPrefix("/") && !$0.appName.isEmpty && !$0.label.isEmpty }),
               commandShortcuts.allSatisfy({ !$0.label.isEmpty }) else { throw ConfigurationError.invalid("Unknown command identifiers or invalid application shortcuts.") }
@@ -118,10 +125,12 @@ final class ConfigurationStore: ObservableObject {
 
     func preview(data: Data) throws -> ConfigurationPreview {
         guard data.count <= 5_000_000 else { throw ConfigurationError.invalid("Configuration file is too large.") }
-        let configuration: PortableConfiguration
+        var configuration: PortableConfiguration
         do { configuration = try JSONDecoder().decode(PortableConfiguration.self, from: data) }
         catch { throw ConfigurationError.invalid("The configuration file is malformed: \(error.localizedDescription)") }
         guard configuration.version == 1 else { throw ConfigurationError.invalid("Unsupported configuration version \(configuration.version).") }
+        configuration.settings = Self.requireAutomationReview(configuration.settings)
+        for index in configuration.profiles.indices { configuration.profiles[index].settings = Self.requireAutomationReview(configuration.profiles[index].settings) }
         try configuration.settings.validate()
         guard !configuration.profiles.isEmpty, Set(configuration.profiles.map(\.id)).count == configuration.profiles.count,
               configuration.profiles.contains(where: { $0.id == configuration.activeProfileID }),
@@ -132,6 +141,7 @@ final class ConfigurationStore: ObservableObject {
         let settings = configuration.settings
         let current = Self.capture(defaults)
         var warnings: [String] = []
+        if !(settings.scripts ?? []).isEmpty || !(settings.extensions ?? []).isEmpty { warnings.append("Imported scripts and extensions are disabled. Review executable paths and arguments in Settings before enabling. Local code runs with your privileges.") }
         for (path, alias) in settings.aliases where current.aliases[path] != nil && current.aliases[path] != alias { warnings.append("Alias conflict for \(path); merge keeps the existing alias.") }
         let currentKeywords = Set((current.quicklinks.map(\.keyword) + current.webSearches.map(\.keyword)).filter { !$0.isEmpty }.map { $0.lowercased() })
         for keyword in Set((settings.quicklinks.map(\.keyword) + settings.webSearches.map(\.keyword)).filter { !$0.isEmpty }) where currentKeywords.contains(keyword.lowercased()) {
@@ -160,14 +170,14 @@ final class ConfigurationStore: ObservableObject {
         if !settings.selectedAppleShortcuts.isEmpty { warnings.append("Apple Shortcuts must be available on this Mac; refresh their list after importing.") }
         if !settings.appShortcuts.isEmpty || !settings.commandShortcuts.isEmpty { warnings.append("Shortcut availability is checked when applying; conflicts restore the previous configuration.") }
         warnings.append("Merge keeps current search and appearance preferences and conflicting identifiers; replace uses the imported values.")
-        return ConfigurationPreview(configuration: configuration, summary: ["\(settings.aliases.count) aliases", "\(settings.quicklinks.count) quicklinks", "\(settings.appShortcuts.count + settings.commandShortcuts.count) shortcuts", "\(settings.pins.count) pins", "\(configuration.profiles.count) profiles"], warnings: warnings)
+        return ConfigurationPreview(configuration: configuration, summary: ["\((settings.snippets ?? []).count) snippets", "\((settings.scripts ?? []).count) scripts", "\((settings.extensions ?? []).count) extensions", "\(settings.aliases.count) aliases", "\(settings.quicklinks.count) quicklinks", "\(settings.appShortcuts.count + settings.commandShortcuts.count) shortcuts", "\(settings.pins.count) pins", "\(configuration.profiles.count) profiles"], warnings: warnings)
     }
 
     func apply(preview: ConfigurationPreview, mode: ConfigurationImportMode, backupURL: URL? = nil) throws {
         // Revalidate even if a preview was constructed programmatically.
-        _ = try self.preview(data: JSONEncoder().encode(preview.configuration))
+        let validated = try self.preview(data: JSONEncoder().encode(preview.configuration))
         let old = Self.capture(defaults), oldProfiles = profiles, oldActive = activeProfileID
-        let incoming = preview.configuration
+        let incoming = validated.configuration
         let next = mode == .replace ? incoming.settings : Self.merge(old, incoming.settings)
         try next.validate()
         if mode == .replace {
@@ -232,18 +242,27 @@ final class ConfigurationStore: ObservableObject {
     }
     private static func capture(_ defaults: UserDefaults) -> PortableSettings {
         func decode<T: Decodable>(_ key: String, fallback: T) -> T { defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(T.self, from: $0) } ?? fallback }
-        return PortableSettings(launcherShortcutID: defaults.string(forKey: "shortcut") ?? "option", launcherCustomShortcut: decode("launcherCustomShortcut", fallback: Optional<Shortcut>.none), aliases: defaults.dictionary(forKey: "appAliases") as? [String: String] ?? [:], quicklinks: decode("quicklinks", fallback: []), webSearches: decode("webSearches", fallback: [WebSearchTemplate(id: "duckduckgo", name: "DuckDuckGo", keyword: "web", target: "https://duckduckgo.com/?q={query}")]), appShortcuts: decode("appShortcuts", fallback: []), commandShortcuts: decode("commandShortcuts", fallback: []), selectedAppleShortcuts: decode("selectedAppleShortcuts", fallback: []), personalization: decode("personalizationSettings", fallback: PersonalizationSettings()), pins: decode("pinnedResults", fallback: []))
+        return PortableSettings(launcherShortcutID: defaults.string(forKey: "shortcut") ?? "option", launcherCustomShortcut: decode("launcherCustomShortcut", fallback: Optional<Shortcut>.none), aliases: defaults.dictionary(forKey: "appAliases") as? [String: String] ?? [:], quicklinks: decode("quicklinks", fallback: []), webSearches: decode("webSearches", fallback: [WebSearchTemplate(id: "duckduckgo", name: "DuckDuckGo", keyword: "web", target: "https://duckduckgo.com/?q={query}")]), appShortcuts: decode("appShortcuts", fallback: []), commandShortcuts: decode("commandShortcuts", fallback: []), selectedAppleShortcuts: decode("selectedAppleShortcuts", fallback: []), personalization: decode("personalizationSettings", fallback: PersonalizationSettings()), pins: decode("pinnedResults", fallback: []), snippets: decode("snippets", fallback: []), scripts: decode("scriptCommands", fallback: []), extensions: decode("extensionManifests", fallback: []))
     }
     private static func write(_ settings: PortableSettings, to defaults: UserDefaults) throws {
         // Encode everything first: malformed data can never leave partial preferences.
-        let encoded = try ["launcherCustomShortcut": JSONEncoder().encode(settings.launcherCustomShortcut), "quicklinks": JSONEncoder().encode(settings.quicklinks), "webSearches": JSONEncoder().encode(settings.webSearches), "appShortcuts": JSONEncoder().encode(settings.appShortcuts), "commandShortcuts": JSONEncoder().encode(settings.commandShortcuts), "selectedAppleShortcuts": JSONEncoder().encode(settings.selectedAppleShortcuts), "personalizationSettings": JSONEncoder().encode(settings.personalization), "pinnedResults": JSONEncoder().encode(settings.pins)]
+        let encoded = try ["launcherCustomShortcut": JSONEncoder().encode(settings.launcherCustomShortcut), "quicklinks": JSONEncoder().encode(settings.quicklinks), "webSearches": JSONEncoder().encode(settings.webSearches), "appShortcuts": JSONEncoder().encode(settings.appShortcuts), "commandShortcuts": JSONEncoder().encode(settings.commandShortcuts), "selectedAppleShortcuts": JSONEncoder().encode(settings.selectedAppleShortcuts), "personalizationSettings": JSONEncoder().encode(settings.personalization), "pinnedResults": JSONEncoder().encode(settings.pins), "snippets": JSONEncoder().encode(settings.snippets ?? []), "scriptCommands": JSONEncoder().encode(settings.scripts ?? []), "extensionManifests": JSONEncoder().encode(settings.extensions ?? [])]
         defaults.set(settings.launcherShortcutID, forKey: "shortcut")
         defaults.set(settings.aliases, forKey: "appAliases")
         for (key, data) in encoded { defaults.set(data, forKey: key) }
     }
+    private static func requireAutomationReview(_ settings: PortableSettings) -> PortableSettings {
+        var result = settings
+        result.scripts = settings.scripts?.map { var command = $0; command.enabled = false; return command }
+        result.extensions = settings.extensions?.map { var manifest = $0; manifest.enabled = false; return manifest }
+        return result
+    }
     private static func merge(_ current: PortableSettings, _ incoming: PortableSettings) -> PortableSettings {
         func union<T: Identifiable>(_ current: [T], _ incoming: [T]) -> [T] { current + incoming.filter { item in !current.contains { $0.id == item.id } } }
         var merged = current
+        merged.scripts = union(current.scripts ?? [], incoming.scripts ?? [])
+        merged.extensions = union(current.extensions ?? [], incoming.extensions ?? [])
+        merged.snippets = union(current.snippets ?? [], incoming.snippets ?? [])
         merged.aliases.merge(incoming.aliases) { existing, _ in existing }
         merged.quicklinks = union(current.quicklinks, incoming.quicklinks); merged.webSearches = union(current.webSearches, incoming.webSearches)
         merged.appShortcuts = union(current.appShortcuts, incoming.appShortcuts); merged.commandShortcuts = union(current.commandShortcuts, incoming.commandShortcuts)

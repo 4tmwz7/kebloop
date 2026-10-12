@@ -36,21 +36,23 @@ private final class SearchField: NSTextField {
 }
 
 private enum LauncherMode: String {
-    case root, clipboard, quicklinks, webSearch
+    case root, clipboard, quicklinks, webSearch, snippets
     var title: String {
         switch self {
-        case .root: return "Results"
-        case .clipboard: return "Clipboard History"
-        case .quicklinks: return "Quicklinks"
-        case .webSearch: return "Web Search"
+        case .snippets: return L("Snippets")
+        case .root: return L("Results")
+        case .clipboard: return L("Clipboard History")
+        case .quicklinks: return L("Quicklinks")
+        case .webSearch: return L("Web Search")
         }
     }
     var placeholder: String {
         switch self {
-        case .root: return "Search apps, links, or commands…"
-        case .clipboard: return "Search clipboard history…"
-        case .quicklinks: return "Search quicklinks…"
-        case .webSearch: return "Search the web…"
+        case .snippets: return L("Search snippets…")
+        case .root: return L("Search apps, links, or commands…")
+        case .clipboard: return L("Search clipboard history…")
+        case .quicklinks: return L("Search quicklinks…")
+        case .webSearch: return L("Search the web…")
         }
     }
 }
@@ -61,6 +63,9 @@ private enum LauncherResult {
     case command(LauncherCommand)
     case quicklink(Quicklink)
     case clipboard(ClipboardEntry)
+    case snippet(Snippet)
+    case script(ScriptCommand)
+    case userExtension(ExtensionManifest)
     case file(FileSearchResult)
     case appleShortcut(AppleShortcut)
     case webSearch(String)
@@ -70,6 +75,9 @@ private enum LauncherResult {
         case .calculation: return "calculator"
         case .command(let command): return "command:\(command.rawValue)"
         case .quicklink(let link): return "link:\(link.id)"
+        case .script(let script): return script.commandID
+        case .userExtension(let manifest): return manifest.commandID
+        case .snippet(let snippet): return "snippet:\(snippet.id)"
         case .clipboard(let entry): return "clipboard:\(entry.id)"
         case .file(let file): return "file:\(file.id)"
         case .appleShortcut(let shortcut): return "apple:\(shortcut.id)"
@@ -112,6 +120,8 @@ private final class ResultButton: NSButton {
 
 @MainActor
 final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDelegate {
+    var onScript: ((ScriptCommand, [String]) -> Void)?
+    var onExtension: ((ExtensionManifest) -> Void)?
     var onSettings: (() -> Void)?
     var onEmoji: (() -> Void)?
     var onAI: ((String) -> Void)?
@@ -122,7 +132,7 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
     private let appleShortcuts: AppleShortcutsService
     private let actionsMenu = ActionMenuController()
     private var actionMenuOpen: Bool { actionsMenu.isVisible }
-    private let actionButton = NSButton(title: "Actions ⌘K", target: nil, action: nil)
+    private let actionButton = NSButton(title: L("Actions") + " ⌘K", target: nil, action: nil)
     private var recentIDs = UserDefaults.standard.stringArray(forKey: "recentResults") ?? []
     private let launchApplication: (IndexedApplication, @escaping (Error?) -> Void) -> Void
     private var presentationRevision = 0
@@ -135,10 +145,13 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
     private let index: ApplicationIndex
     private let quicklinks: QuicklinkStore
     private let clipboard: ClipboardHistoryStore
+    private let snippets: SnippetStore
+    private let scripts: ScriptCommandStore
+    private let extensions: ExtensionStore
     private let aliases: AppAliasStore
     private let ai: AIHandoffService
     private let aiButton = NSButton(title: "", target: nil, action: nil)
-    private let clearHistoryButton = NSButton(title: "Clear…", target: nil, action: nil)
+    private let clearHistoryButton = NSButton(title: L("Clear…"), target: nil, action: nil)
     private var isConfirmingClear = false
     private let files = FileSearchService()
     private var mode: LauncherMode = .root
@@ -165,11 +178,14 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
     private var outsideMonitor: Any?
     private var message: String?
 
-    init(index: ApplicationIndex, quicklinks: QuicklinkStore, clipboard: ClipboardHistoryStore, aliases: AppAliasStore, ai: AIHandoffService, personalization: PersonalizationStore? = nil, appleShortcuts: AppleShortcutsService? = nil, launchApplication: ((IndexedApplication, @escaping (Error?) -> Void) -> Void)? = nil) {
+    init(index: ApplicationIndex, quicklinks: QuicklinkStore, clipboard: ClipboardHistoryStore, aliases: AppAliasStore, ai: AIHandoffService, personalization: PersonalizationStore? = nil, appleShortcuts: AppleShortcutsService? = nil, snippets: SnippetStore? = nil, scripts: ScriptCommandStore? = nil, extensions: ExtensionStore? = nil, launchApplication: ((IndexedApplication, @escaping (Error?) -> Void) -> Void)? = nil) {
         self.index = index
         self.launchApplication = launchApplication ?? index.launch
         self.quicklinks = quicklinks
         self.clipboard = clipboard
+        self.snippets = snippets ?? SnippetStore()
+        self.scripts = scripts ?? ScriptCommandStore()
+        self.extensions = extensions ?? ExtensionStore()
         self.aliases = aliases
         self.ai = ai
         self.personalization = personalization ?? PersonalizationStore()
@@ -189,10 +205,18 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
                 guard let self, self.panel.isVisible, !self.actionsMenu.isVisible else { return }
                 self.focusInput()
             }.store(in: &subscriptions)
-        panel.setAccessibilityLabel("Kebloop launcher")
+        panel.setAccessibilityLabel(L("Kebloop launcher"))
         buildInterface()
         self.personalization.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in
             DispatchQueue.main.async { self?.applyPersonalization() }
+        }.store(in: &subscriptions)
+        for publisher in [self.scripts.objectWillChange, self.extensions.objectWillChange] {
+            publisher.receive(on: DispatchQueue.main).sink { [weak self] _ in
+                DispatchQueue.main.async { guard let self, self.panel.isVisible else { return }; self.updateResults(preserveSelection: true) }
+            }.store(in: &subscriptions)
+        }
+        self.snippets.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in
+            DispatchQueue.main.async { guard let self, self.panel.isVisible else { return }; self.updateResults(preserveSelection: true) }
         }.store(in: &subscriptions)
         self.appleShortcuts.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in
             DispatchQueue.main.async { guard let self, self.panel.isVisible else { return }; self.updateResults(preserveSelection: true) }
@@ -326,7 +350,7 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
         backButton.target = self
         backButton.action = #selector(goBack)
         backButton.isHidden = true
-        backButton.setAccessibilityLabel("Back to launcher")
+        backButton.setAccessibilityLabel(L("Back to launcher"))
         icon.contentTintColor = .secondaryLabelColor
         input.placeholderString = mode.placeholder
         input.font = .systemFont(ofSize: 19, weight: .regular)
@@ -334,7 +358,7 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
         input.drawsBackground = false
         input.focusRingType = .none
         input.delegate = self
-        input.setAccessibilityLabel("Search")
+        input.setAccessibilityLabel(L("Search"))
         input.cell?.isScrollable = true
         for view in [icon, backButton, input] { view.translatesAutoresizingMaskIntoConstraints = false; header.addSubview(view) }
         NSLayoutConstraint.activate([
@@ -362,7 +386,7 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
         clearHistoryButton.isBordered = false
         clearHistoryButton.font = .systemFont(ofSize: 11)
         clearHistoryButton.translatesAutoresizingMaskIntoConstraints = false
-        clearHistoryButton.setAccessibilityLabel("Clear clipboard history")
+        clearHistoryButton.setAccessibilityLabel(L("Clear clipboard history"))
         categoryWrapper.addSubview(clearHistoryButton)
         aiButton.target = self
         aiButton.action = #selector(askAI)
@@ -503,15 +527,16 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
             let appResults = config.appsEnabled ? index.applications.filter { !config.hiddenApps.contains($0.path) }.map(LauncherResult.application) : []
             let linkResults = config.linksEnabled ? quicklinks.links.map(LauncherResult.quicklink) : []
             let commands = config.commandsEnabled ? LauncherCommand.allCases.map(LauncherResult.command) : []
+            let snippetResults = config.commandsEnabled ? snippets.snippets.map(LauncherResult.snippet) + scripts.commands.filter(\.enabled).map(LauncherResult.script) + extensions.manifests.filter(\.enabled).map(LauncherResult.userExtension) : []
             let shortcutResults = config.commandsEnabled ? appleShortcuts.selected.map(LauncherResult.appleShortcut) : []
             if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 let rankedApps = rank(appResults, query: "")
-                let favorites = pinnedResults(from: appResults + linkResults + commands + shortcutResults)
+                let favorites = pinnedResults(from: appResults + linkResults + commands + shortcutResults + snippetResults)
                 if config.emptyMode == "favorites" { results = favorites + commands.filter { !favorites.map(\.id).contains($0.id) } }
                 else if config.emptyMode == "recent" { results = recentIDs.compactMap { id in (appResults + linkResults + shortcutResults).first { $0.id == id } } + commands }
                 else { results = favorites + Array(rankedApps.filter { !favorites.map(\.id).contains($0.id) }.prefix(3)) + commands.filter { !favorites.map(\.id).contains($0.id) } }
             } else {
-                results = Array(rank(appResults + linkResults + commands + shortcutResults, query: query).prefix(12))
+                results = Array(rank(appResults + linkResults + commands + shortcutResults + snippetResults, query: query).prefix(12))
                 // Indexed files enrich results without delaying or overtaking app matches.
                 results += files.results.filter { personalization.allowsFile(path: $0.path) }.prefix(12).map(LauncherResult.file)
                 if config.linksEnabled, let resolved = quicklinks.resolve(query: query) { results.insert(.quicklink(resolved.link), at: 0); results = uniqueResults(results) }
@@ -522,13 +547,15 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
                 case .none, .incomplete: break
                 }
             }
+        case .snippets:
+            results = rank(snippets.snippets.map(LauncherResult.snippet), query: query)
         case .webSearch:
             results = query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || quicklinks.fallbackURL(query: query) == nil ? [] : [.webSearch(query)]
         case .quicklinks:
             results = rank(quicklinks.links.map(LauncherResult.quicklink), query: query)
         case .clipboard:
             let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-            results = clipboard.items.filter { trimmed.isEmpty || $0.text.localizedCaseInsensitiveContains(trimmed) }.map(LauncherResult.clipboard)
+            results = clipboard.items.filter { trimmed.isEmpty || $0.searchableText.localizedCaseInsensitiveContains(trimmed) }.map(LauncherResult.clipboard)
         }
         selection = selectedID.flatMap { id in results.firstIndex { $0.id == id } } ?? (preserveSelection ? min(selection, max(0, results.count - 1)) : 0)
         render()
@@ -545,6 +572,9 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
             let name: String
             switch result {
             case .application(let app): name = app.name
+            case .script(let script): name = script.title
+            case .userExtension(let manifest): name = manifest.name
+            case .snippet(let snippet): name = snippet.name
             case .quicklink(let link): name = link.name
             case .command(let command): name = command.title
             case .appleShortcut(let shortcut): name = shortcut.name
@@ -614,46 +644,60 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
                 title = app.name
                 let hasDuplicateName = index.applications.contains { $0.id != app.id && $0.name == app.name }
                 subtitle = hasDuplicateName ? NSString(string: app.path).abbreviatingWithTildeInPath : "Application"
-                action = "Open"
+                action = L("Open")
             case .command(let command):
                 icon = NSImage(systemSymbolName: command.symbol, accessibilityDescription: nil)
                 title = command.title
                 switch command {
-                case .settings: subtitle = "Preferences and shortcuts"
-                case .shutdown: subtitle = "Shows macOS shutdown confirmation"
-                default: subtitle = "Command"
+                case .settings: subtitle = L("Preferences and shortcuts")
+                case .shutdown: subtitle = L("Shows macOS shutdown confirmation")
+                default: subtitle = L("Command")
                 }
-                action = "Open"
+                action = L("Open")
             case .appleShortcut(let shortcut):
                 icon = NSImage(systemSymbolName: "square.stack.3d.up", accessibilityDescription: nil)
-                title = shortcut.name; subtitle = "Apple Shortcut"; action = "Run"
+                title = shortcut.name; subtitle = L("Apple Shortcut"); action = L("Run")
             case .webSearch(let query):
                 icon = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
-                title = "Search the web for \(query)"; subtitle = "Opens your configured search website"; action = "Search"
+                title = "Search the web for \(query)"; subtitle = L("Opens your configured search website"); action = L("Search")
             case .quicklink(let link):
                 icon = NSImage(systemSymbolName: "link", accessibilityDescription: nil)
                 title = link.name
                 let argument = quicklinks.resolve(query: input.stringValue).flatMap { $0.link.id == link.id ? $0.argument : nil } ?? ""
                 subtitle = link.keyword.isEmpty ? link.target : "\(link.keyword) · \(link.resolvedURL(argument: argument)?.absoluteString ?? link.target)"
-                action = "Open"
+                action = L("Open")
+            case .script(let script):
+                icon = NSImage(systemSymbolName: "terminal", accessibilityDescription: nil)
+                title = script.title; subtitle = script.description; action = L("Run")
+            case .userExtension(let manifest):
+                icon = NSImage(systemSymbolName: "puzzlepiece.extension", accessibilityDescription: nil)
+                title = manifest.name; subtitle = manifest.description; action = L("Open")
+            case .snippet(let snippet):
+                icon = NSImage(systemSymbolName: "text.quote", accessibilityDescription: nil)
+                title = snippet.name; subtitle = String(snippet.template.prefix(120)); action = L("Preview")
             case .clipboard(let entry):
                 icon = NSImage(systemSymbolName: "clipboard", accessibilityDescription: nil)
-                title = entry.preview
+                title = (entry.isPinned ? "📌 " : "") + entry.preview
                 subtitle = entry.date.formatted(date: .abbreviated, time: .shortened)
-                action = "Copy"
+                action = L("Copy")
             case .file(let file):
                 icon = NSImage(systemSymbolName: "doc", accessibilityDescription: nil)
                 title = file.name
                 subtitle = NSString(string: file.path).abbreviatingWithTildeInPath
-                action = "Open"
+                action = L("Open")
             case .calculation(let result):
                 icon = NSImage(systemSymbolName: "equal.square", accessibilityDescription: nil)
                 title = result.display
                 subtitle = result.expression
-                action = "Copy answer"
+                action = L("Copy answer")
             }
             let image = NSImageView()
             image.image = icon
+            if case .clipboard(let entry) = result, entry.imageAttachment != nil {
+                Task { [weak image, weak clipboard] in
+                    if let data = await clipboard?.imageThumbnailData(for: entry) { image?.image = NSImage(data: data) }
+                }
+            }
             image.imageScaling = .scaleProportionallyUpOrDown
             let titleLabel = NSTextField(labelWithString: title)
             titleLabel.font = .systemFont(ofSize: personalization.settings.textSize, weight: .medium)
@@ -686,7 +730,7 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
                 remove.image = NSImage(systemSymbolName: "trash", accessibilityDescription: "Remove clipboard item")
                 remove.contentTintColor = .secondaryLabelColor
                 remove.translatesAutoresizingMaskIntoConstraints = false
-                remove.setAccessibilityLabel("Remove clipboard item")
+                remove.setAccessibilityLabel(L("Remove clipboard item"))
                 remove.toolTip = "Remove item (⌘⌫)"
                 remove.invoke = { [weak self] in self?.clipboard.remove(id: entry.id) }
                 button.addSubview(remove)
@@ -764,6 +808,11 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
 
     func executeCommand(id: String) {
         guard personalization.settings.commandsEnabled else { return }
+        if let script = scripts.commands.first(where: { $0.commandID == id && $0.enabled }) { onScript?(script, []); return }
+        if let manifest = extensions.manifests.first(where: { $0.commandID == id && $0.enabled }) { onExtension?(manifest); return }
+        if id.hasPrefix("snippet:"), let snippet = snippets.snippets.first(where: { "snippet:" + $0.id == id }) {
+            show(); results = [.snippet(snippet)]; selection = 0; performSelected(); return
+        }
         if id.hasPrefix("apple:"), let shortcut = appleShortcuts.selected.first(where: { "apple:" + $0.id == id }) {
             show(); results = [.appleShortcut(shortcut)]; selection = 0; performSelected(); return
         }
@@ -816,10 +865,10 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
             let title: String
             if action == .open {
                 switch result {
-                case .clipboard: title = String(localized: "Copy")
-                case .calculation: title = String(localized: "Copy Answer")
-                case .appleShortcut: title = String(localized: "Run")
-                case .webSearch: title = String(localized: "Search")
+                case .clipboard: title = L("Copy")
+                case .calculation: title = L("Copy Answer")
+                case .appleShortcut: title = L("Run")
+                case .webSearch: title = L("Search")
                 default: title = action.title
                 }
             } else { title = action.title }
@@ -833,6 +882,15 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
         case .command: kind = .command
         case .appleShortcut: kind = .appleShortcut
         default: kind = .other
+        }
+        if case .script = result { add(.open); add(.runWithInput); return items }
+        if case .clipboard(let entry) = result {
+            for action in ResultAction.available(kind: .clipboard, pinned: entry.isPinned) {
+                if action == .pin || action == .unpin {
+                    items.append(ActionMenuItem(action: action, title: entry.isPinned ? L("Unpin Clipboard Item") : L("Pin Clipboard Item")))
+                } else { add(action) }
+            }
+            return items
         }
         for action in ResultAction.available(kind: kind, pinned: personalization.isPinned(id: result.id)) { add(action) }
         return items
@@ -864,21 +922,33 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
 
     private func performResultAction(_ action: ResultAction, resultID: String) {
         guard let position = results.firstIndex(where: { $0.id == resultID }) else {
-            message = String(localized: "This result is no longer available."); render(); return
+            message = L("This result is no longer available."); render(); return
         }
         selection = position
         let result = results[position]
         let path: String?
         switch result { case .file(let file): path = file.path; case .application(let app): path = app.path; default: path = nil }
         switch action {
+        case .removeClipboardItem:
+            guard case .clipboard(let entry) = result else { return }
+            clipboard.remove(id: entry.id)
+            updateResults(preserveSelection: true)
         case .open: performSelected()
         case .runWithInput:
+            if case .script(let script) = result {
+                let alert = NSAlert(); alert.messageText = script.title; alert.informativeText = L("Additional literal arguments, one per line")
+                let field = NSTextView(frame: NSRect(x: 0, y: 0, width: 360, height: 100)); field.setAccessibilityLabel(L("Script arguments, one per line"))
+                alert.accessoryView = field; alert.addButton(withTitle: L("Run")); alert.addButton(withTitle: L("Cancel"))
+                isConfirmingClear = true; let response = alert.runModal(); isConfirmingClear = false
+                if response == .alertFirstButtonReturn { onScript?(script, field.string.isEmpty ? [] : field.string.components(separatedBy: "\n")) }
+                return
+            }
             guard case .appleShortcut(let shortcut) = result else { return }
-            let alert = NSAlert(); alert.messageText = String(localized: "Run Shortcut With Input")
+            let alert = NSAlert(); alert.messageText = L("Run Shortcut With Input")
             alert.informativeText = shortcut.name
             let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 28))
-            field.placeholderString = String(localized: "Text input"); field.setAccessibilityLabel(String(localized: "Shortcut text input"))
-            alert.accessoryView = field; alert.addButton(withTitle: String(localized: "Run")); alert.addButton(withTitle: String(localized: "Cancel"))
+            field.placeholderString = L("Text input"); field.setAccessibilityLabel(L("Shortcut text input"))
+            alert.accessoryView = field; alert.addButton(withTitle: L("Run")); alert.addButton(withTitle: L("Cancel"))
             isConfirmingClear = true
             let response = alert.runModal(); isConfirmingClear = false
             if response == .alertFirstButtonReturn {
@@ -888,17 +958,21 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
                 }
             }
 
-        case .pin, .unpin: if let pin = pin(for: result) { personalization.togglePin(pin); updateResults(preserveSelection: true) }
+        case .pin, .unpin:
+            if case .clipboard(let entry) = result {
+                if !clipboard.setPinned(action == .pin, for: entry.id) { message = L("Clipboard pin limit reached") }
+                updateResults(preserveSelection: true)
+            } else if let pin = pin(for: result) { personalization.togglePin(pin); updateResults(preserveSelection: true) }
         case .editQuicklink: if case .quicklink(let link) = result { onEditQuicklink?(link) }
         case .copyPath:
             if let path { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(path, forType: .string) }
         case .reveal:
             if let path, FileManager.default.fileExists(atPath: path) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
-            else { message = String(localized: "This item no longer exists."); render() }
+            else { message = L("This item no longer exists."); render() }
         case .openWith:
             guard let path else { return }
             guard FileManager.default.fileExists(atPath: path) else { message = "This file no longer exists."; render(); return }
-            let picker = NSOpenPanel(); picker.title = String(localized: "Choose an application"); picker.directoryURL = URL(fileURLWithPath: "/Applications"); picker.allowedContentTypes = [.application]
+            let picker = NSOpenPanel(); picker.title = L("Choose an application"); picker.directoryURL = URL(fileURLWithPath: "/Applications"); picker.allowedContentTypes = [.application]
             isConfirmingClear = true
             let response = picker.runModal(); isConfirmingClear = false
             if response == .OK, let application = picker.url {
@@ -933,10 +1007,10 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
         guard !clipboard.items.isEmpty else { return }
         isConfirmingClear = true
         let alert = NSAlert()
-        alert.messageText = "Clear clipboard history?"
-        alert.informativeText = "All saved clipboard items will be removed."
-        alert.addButton(withTitle: "Clear History")
-        alert.addButton(withTitle: "Cancel")
+        alert.messageText = L("Clear clipboard history?")
+        alert.informativeText = L("All saved clipboard items, including pinned items and attachments, will be removed.")
+        alert.addButton(withTitle: L("Clear History"))
+        alert.addButton(withTitle: L("Cancel"))
         alert.buttons[0].hasDestructiveAction = true
         if alert.runModal() == .alertFirstButtonReturn { clipboard.clear() }
         isConfirmingClear = false
@@ -947,6 +1021,7 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
 
     private var emptyMessage: String {
         switch mode {
+        case .snippets: return L("Add snippets in Settings")
         case .root: return files.isSearching ? "Searching files…" : (index.isRefreshing ? "Finding your apps…" : "No results")
         case .clipboard:
             if !clipboard.items.isEmpty { return "No matching clipboard items" }
@@ -992,6 +1067,8 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
             if !NSWorkspace.shared.open(url) { showExternalActionError("Couldn’t open web search.", context: context) }
         case .command(let command):
             switch command {
+            case .snippets: enter(.snippets)
+            case .scripts, .extensions: onCommand?(command)
             case .clipboard: enter(.clipboard)
             case .quicklinks: enter(.quicklinks)
             case .emoji: onEmoji?()
@@ -1018,6 +1095,13 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
             }
             usage[context.resultID, default: 0] += 1
             UserDefaults.standard.set(usage, forKey: "usage")
+        case .script(let script): onScript?(script, [])
+        case .userExtension(let manifest): onExtension?(manifest)
+        case .snippet(let snippet):
+            isConfirmingClear = true
+            let prepared = SnippetPresenter.prepare(snippet)
+            isConfirmingClear = false
+            if let prepared { dismiss(); if prepared.insert { SnippetPresenter.paste() } } else { focusInput() }
         case .clipboard(let entry):
             clipboard.copy(entry)
             dismiss()

@@ -88,3 +88,31 @@ Release XCTest coverage checks matching/ranking, duplicate names, calculator gra
 Native UI smoke checks covered app/calculator workflows, Settings search, creating and opening a quicklink, recording/copying clipboard entries, finding an indexed file, emoji search/copy, and the app shortcut recorder. App-scoped UI automation does not deliver system-wide Carbon hotkey events, so physical keyboard invocation of global shortcuts needs a manual check; native registration and Carbon event-routing tests pass. Multiple displays, full-screen Spaces, VoiceOver, login startup, and the under-100-ms open target still need broader device testing.
 
 See [PLAN.md](../PLAN.md) for scope and acceptance targets.
+
+## Everyday utilities (milestone 3)
+
+### Clipboard retention, pins, and formats
+
+Settings → Clipboard contains a 1–200 unpinned item limit, retention in days (0 keeps entries indefinitely), source app exclusions by bundle identifier, and 15-minute/one-hour recording pauses. A pause deadline survives relaunch. Privacy controls remain global across profiles. The source is approximated using the foreground app when polling; background writers and rapid app switching cannot be attributed reliably. Sensitive pasteboard markers are checked for text, images, and rich text.
+
+In Clipboard History, select an entry and press ⌘K to copy, pin/unpin, or remove the selected item. Removing an item keeps the current search query and selects a remaining result. Up to 50 pins are exempt from count/age retention. Clear History removes **all entries, including pins and attachment files**. Old text-only history migrates without losing text. Image previews load on demand; copying restores saved image/RTF/HTML formats plus plain text when available. Attachments have a 5 MiB per-entry and 50 MiB aggregate budget; unsupported or oversized payloads are omitted, with plain text retained where possible. Missing/corrupt attachments are discarded and orphan files are cleaned up.
+
+### Snippets
+
+Settings → Snippets manages named text. Use explicit placeholders such as `Hello {name}, your order {order_id} is ready.` Names start with an ASCII letter and contain letters, digits, or underscores; repeated placeholders share a value. Search the snippet title or open the Snippets command. Return prompts for each value, then shows a selectable preview. Cancel leaves the pasteboard unchanged. Copy needs no permission. Insert copies first and pastes into the previous application when Accessibility is already allowed; otherwise it explains how to enable it and retains the copy fallback. This feature uses no global typing monitor. Snippets are included in configuration/profile export, merge, replace, and switching.
+
+### Conversions and dates
+
+See [supported conversion/date syntax](conversions.md). Results appear alongside calculations and Return copies the answer. All operations work offline; currencies are deferred.
+
+### Language and keyboard layouts
+
+English and Polish UI resources ship with the app and follow macOS preferred languages (including the per-app language setting). Stable English command names remain searchable alongside Polish aliases, for example `settings` / `ustawienia`, `clipboard` / `schowek`, and `help` / `pomoc`. Conversion numbers and dates use locale formatting. Input composition bypasses launcher action keys while marked text is active. Shortcut recording uses the current event’s characters with stable hardware key codes, preserving assignments across layout changes. Native VoiceOver, Polish/non-US layout, IME, and longer-text checks are recorded separately from unit coverage; not all combinations have been verified.
+
+For community translations, add `<language>.lproj/Localizable.strings` beside the English catalog in `Sources/Kebloop/Resources`, retain every English key, translate only values, and preserve placeholder syntax and shortcut symbols. Wrap new static UI strings with `L(...)`, add matching keys to both current catalogs, build with `scripts/build-app.sh` (which packages the resource bundle), and review the UI at large text sizes. User-defined names, stable IDs, paths, executable arguments, and extension protocol fields must never be translated. Runtime diagnostics and user/extension-provided text may retain their original language. Right-to-left languages require a native layout audit before release.
+
+## User automation (milestone 4)
+
+Settings → Script Commands lets you select a local executable/runtime, add literal arguments (one per line), set a timeout, and explicitly enable a reviewed command. Search its title to run it; a separate output window offers cancellation and copyable output. Settings → Extensions imports versioned manifests, lets you review executable/arguments, enable/disable/remove extensions, and edit nonsecret preferences. Enabled extensions appear in root search; opening one presents its native search/list/detail/action interface.
+
+See [automation API, trust model, templates, and examples](automation.md). Imported configuration disables scripts and extensions in every profile until reviewed. Import never executes code. Metadata and literal arguments are portable, so never store secrets there. Credential fields are unsupported; extension preferences remain local and are excluded from exports. Local subprocesses run with your account’s privileges, including filesystem/network access. Process isolation keeps the UI responsive; it is not a sandbox. Core launcher workflows remain offline and usable when an extension fails.

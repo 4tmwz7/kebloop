@@ -81,11 +81,11 @@ private struct EmojiPickerView: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(.secondary)
-                TextField("Search emoji", text: $model.query)
+                TextField(L("Search emoji"), text: $model.query)
                     .textFieldStyle(.plain)
                     .font(.system(size: 16))
                     .focused($searchFocused)
-                    .accessibilityLabel("Search emoji")
+                    .accessibilityLabel(L("Search emoji"))
                 if !model.query.isEmpty {
                     Button {
                         model.query = ""
@@ -95,14 +95,14 @@ private struct EmojiPickerView: View {
                             .foregroundStyle(.tertiary)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Clear search")
+                    .accessibilityLabel(L("Clear search"))
                 }
                 Button(action: close) {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Close emoji picker")
+                .accessibilityLabel(L("Close emoji picker"))
             }
             .padding(.horizontal, 16)
             .frame(height: 52)
@@ -128,7 +128,7 @@ private struct EmojiPickerView: View {
                         .buttonStyle(.plain)
                         .accessibilityValue(model.selectedCategory == category ? "Selected" : "")
                         .accessibilityAddTraits(model.selectedCategory == category ? .isSelected : [])
-                        .accessibilityHint("Filters emoji by category.")
+                        .accessibilityHint(L("Filters emoji by category."))
                     }
                 }
                 .padding(.horizontal, 12)
@@ -206,7 +206,7 @@ private struct EmojiPickerView: View {
         .accessibilityLabel("\(entry.name), \(entry.symbol)")
         .accessibilityValue(isSelected ? "Selected for copying" : "")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .accessibilityHint("Press Return or click to copy this emoji.")
+        .accessibilityHint(L("Press Return or click to copy this emoji."))
     }
 }
 
@@ -238,7 +238,7 @@ public final class EmojiPickerController: NSWindowController, NSWindowDelegate {
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.delegate = self
-        panel.setAccessibilityLabel("Emoji picker")
+        panel.setAccessibilityLabel(L("Emoji picker"))
         installView(in: panel)
 
         keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in

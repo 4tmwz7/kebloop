@@ -42,6 +42,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let hotkey = HotkeyService()
     private let quicklinks = QuicklinkStore()
     private let clipboard = ClipboardHistoryStore()
+    private let snippets = SnippetStore()
+    private let scripts = ScriptCommandStore()
+    private let extensions = ExtensionStore()
+    private var automationWindows: [NSWindow] = []
     private let aliases = AppAliasStore()
     private let ai = AIHandoffService()
     private let personalization = PersonalizationStore()
@@ -71,6 +75,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         commandShortcuts.isEnabled = { [weak self] id in
             guard let self, self.personalization.settings.commandsEnabled else { return false }
             if id.hasPrefix("link:") { return self.personalization.settings.linksEnabled && self.quicklinks.links.contains { "link:" + $0.id == id } }
+            if id.hasPrefix("script:") { return self.scripts.commands.contains { $0.commandID == id && $0.enabled } }
+            if id.hasPrefix("extension:") { return self.extensions.manifests.contains { $0.commandID == id && $0.enabled } }
+            if id.hasPrefix("snippet:") { return self.snippets.snippets.contains { "snippet:" + $0.id == id } }
             if id.hasPrefix("apple:") { return self.appleShortcuts.selected.contains { "apple:" + $0.id == id } }
             return LauncherCommand(rawValue: id) != nil
         }
@@ -79,9 +86,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }.store(in: &subscriptions)
         quicklinks.$links.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in DispatchQueue.main.async { self?.reconcileCommandBindings() } }.store(in: &subscriptions)
         appleShortcuts.$selected.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in DispatchQueue.main.async { self?.reconcileCommandBindings() } }.store(in: &subscriptions)
+        scripts.$commands.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in DispatchQueue.main.async { self?.reconcileCommandBindings() } }.store(in: &subscriptions)
+        extensions.$manifests.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in DispatchQueue.main.async { self?.reconcileCommandBindings() } }.store(in: &subscriptions)
+        snippets.$snippets.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in DispatchQueue.main.async { self?.reconcileCommandBindings() } }.store(in: &subscriptions)
         configureMenus()
-        launcher = LauncherPanelController(index: index, quicklinks: quicklinks, clipboard: clipboard, aliases: aliases, ai: ai, personalization: personalization, appleShortcuts: appleShortcuts)
+        launcher = LauncherPanelController(index: index, quicklinks: quicklinks, clipboard: clipboard, aliases: aliases, ai: ai, personalization: personalization, appleShortcuts: appleShortcuts, snippets: snippets, scripts: scripts, extensions: extensions)
         launcher.profileName = { [weak self] in self?.configuration.activeProfileName ?? "Personal" }
+        launcher.onScript = { [weak self] command, arguments in self?.runScript(command, arguments: arguments) }
+        launcher.onExtension = { [weak self] in self?.showExtension($0) }
         launcher.onSettings = { [weak self] in self?.showSettings() }
         commandShortcuts.onCommand = { [weak self] id in self?.launcher.executeCommand(id: id) }
         launcher.onCommand = { [weak self] command in self?.handleCommand(command) }
@@ -93,11 +105,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.image = NSImage(systemSymbolName: "command.square", accessibilityDescription: "Kebloop")
         let menu = NSMenu()
-        menu.addItem(withTitle: "Open Kebloop", action: #selector(openLauncher), keyEquivalent: "")
-        menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
-        menu.addItem(withTitle: "Refresh Applications", action: #selector(refresh), keyEquivalent: "")
+        menu.addItem(withTitle: L("Open Kebloop"), action: #selector(openLauncher), keyEquivalent: "")
+        menu.addItem(withTitle: L("Settings…"), action: #selector(showSettings), keyEquivalent: ",")
+        menu.addItem(withTitle: L("Refresh Applications"), action: #selector(refresh), keyEquivalent: "")
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit Kebloop", action: #selector(quit), keyEquivalent: "")
+        menu.addItem(withTitle: L("Quit Kebloop"), action: #selector(quit), keyEquivalent: "")
         for item in menu.items { item.target = self }
         statusItem.menu = menu
         hotkey.onPress = { [weak self] in self?.launcher.toggle() }
@@ -119,21 +131,21 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let bar = NSMenu()
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
-        let settingsItem = appMenu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        let settingsItem = appMenu.addItem(withTitle: L("Settings…"), action: #selector(showSettings), keyEquivalent: ",")
         settingsItem.target = self
         appMenu.addItem(.separator())
-        let hideItem = appMenu.addItem(withTitle: "Hide Kebloop", action: #selector(hideInterface), keyEquivalent: "q")
+        let hideItem = appMenu.addItem(withTitle: L("Hide Kebloop"), action: #selector(hideInterface), keyEquivalent: "q")
         hideItem.target = self
-        let quitItem = appMenu.addItem(withTitle: "Quit Kebloop", action: #selector(quit), keyEquivalent: "")
+        let quitItem = appMenu.addItem(withTitle: L("Quit Kebloop"), action: #selector(quit), keyEquivalent: "")
         quitItem.target = self
         appItem.submenu = appMenu
         bar.addItem(appItem)
         let editItem = NSMenuItem()
-        let editMenu = NSMenu(title: "Edit")
+        let editMenu = NSMenu(title: L("Edit Menu"))
         for (title, selector, key) in [("Undo", "undo:", "z"), ("Redo", "redo:", "Z"),
                                        ("Cut", "cut:", "x"), ("Copy", "copy:", "c"),
                                        ("Paste", "paste:", "v"), ("Select All", "selectAll:", "a")] {
-            let item = editMenu.addItem(withTitle: title, action: Selector(selector), keyEquivalent: key)
+            let item = editMenu.addItem(withTitle: L(title), action: Selector(selector), keyEquivalent: key)
             item.keyEquivalentModifierMask = key == "Z" ? [.command, .shift] : .command
         }
         editItem.submenu = editMenu
@@ -169,6 +181,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let validLinks = Set(quicklinks.links.map { "link:" + $0.id })
         let validShortcuts = Set(appleShortcuts.selected.map { "apple:" + $0.id })
         for binding in commandShortcuts.bindings {
+            if binding.id.hasPrefix("script:"), !scripts.commands.contains(where: { $0.commandID == binding.id }) { commandShortcuts.remove(id: binding.id) }
+            if binding.id.hasPrefix("extension:"), !extensions.manifests.contains(where: { $0.commandID == binding.id }) { commandShortcuts.remove(id: binding.id) }
+            if binding.id.hasPrefix("snippet:"), !snippets.snippets.contains(where: { "snippet:" + $0.id == binding.id }) { commandShortcuts.remove(id: binding.id) }
             if binding.id.hasPrefix("link:"), !validLinks.contains(binding.id) { commandShortcuts.remove(id: binding.id) }
             if binding.id.hasPrefix("apple:"), !validShortcuts.contains(binding.id) { commandShortcuts.remove(id: binding.id) }
         }
@@ -181,15 +196,30 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         preferences.customShortcut = UserDefaults.standard.data(forKey: "launcherCustomShortcut").flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) }
         preferences.shortcutID = UserDefaults.standard.string(forKey: "shortcut") ?? "option"
         preferences.shortcutError = hotkey.register(preferences.shortcut) ? nil : "Launcher shortcut unavailable."
-        aliases.reload(); quicklinks.reload(); personalization.reload(); appleShortcuts.reload()
+        scripts.reload(); extensions.reload(); snippets.reload(); aliases.reload(); quicklinks.reload(); personalization.reload(); appleShortcuts.reload()
         shortcuts.reload(register: false); commandShortcuts.reload(register: false)
         shortcuts.resume(); commandShortcuts.resume()
+    }
+    private func automationWindow<V: View>(title: String, view: V) {
+        launcher.dismiss(restoreFocus: false)
+        automationWindows.removeAll { !$0.isVisible }
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 660, height: 520), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        window.title = title; window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: view)
+        automationWindows.append(window); window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+    }
+    private func runScript(_ command: ScriptCommand, arguments: [String] = []) {
+        automationWindow(title: command.title, view: ScriptOutputView(store: scripts))
+        scripts.run(id: command.id, arguments: arguments)
+    }
+    private func showExtension(_ manifest: ExtensionManifest) {
+        automationWindow(title: manifest.name, view: ExtensionBrowserView(store: extensions, extensionID: manifest.id))
     }
     private func handleCommand(_ command: LauncherCommand) {
         switch command {
         case .browse, .help: showHelp(onboarding: false)
         case .onboarding: showHelp(onboarding: true)
-        case .profiles, .appleShortcuts, .webSearch:
+        case .snippets, .scripts, .extensions, .profiles, .appleShortcuts, .webSearch:
             showSettings(); DispatchQueue.main.async { NotificationCenter.default.post(name: .init("KebloopSettingsTab"), object: command.rawValue) }
         default: launcher.executeCommand(id: command.rawValue)
         }
@@ -222,7 +252,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         settings?.orderOut(nil)
         launcher.dismiss()
     }
-    @objc private func quit() { NSApp.terminate(nil) }
+    func applicationWillTerminate(_ notification: Notification) { scripts.cancel(); extensions.cancel() }
+    @objc private func quit() { scripts.cancel(); extensions.cancel(); NSApp.terminate(nil) }
     private func applyWindowAppearance() {
         let appearance: NSAppearance?
         switch personalization.settings.appearance {
@@ -237,14 +268,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         launcher.dismiss(restoreFocus: false)
         if settings == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 680), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
-            window.title = "Kebloop Settings"
+            window.title = L("Kebloop Settings")
             window.contentMinSize = NSSize(width: 820, height: 580)
             window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
             window.titlebarSeparatorStyle = .none
             window.isReleasedWhenClosed = false
             window.delegate = self
-            window.contentView = NSHostingView(rootView: SettingsView(preferences: preferences, index: index, quicklinks: quicklinks, shortcuts: shortcuts, aliases: aliases, clipboard: clipboard, ai: ai, personalization: personalization, configuration: configuration, commandShortcuts: commandShortcuts, appleShortcuts: appleShortcuts, onReplayOnboarding: { [weak self] in self?.showHelp(onboarding: true) }, onExecute: { [weak self] id in
+            window.contentView = NSHostingView(rootView: SettingsView(preferences: preferences, index: index, quicklinks: quicklinks, shortcuts: shortcuts, aliases: aliases, clipboard: clipboard, ai: ai, personalization: personalization, configuration: configuration, commandShortcuts: commandShortcuts, appleShortcuts: appleShortcuts, snippets: snippets, scripts: scripts, extensions: extensions, onReplayOnboarding: { [weak self] in self?.showHelp(onboarding: true) }, onExecute: { [weak self] id in
                 self?.settings?.orderOut(nil); self?.launcher.executeCommand(id: id)
             }))
             window.center()
