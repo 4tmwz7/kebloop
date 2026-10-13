@@ -39,3 +39,21 @@ The feature checks below exercise the production stores, parser, subprocess runn
 Restarting the rebuilt app restored native launcher inspection and confirmed the new commands are present. Opening Settings then closed the native automation pipe again; selecting Kebloop by bundle identifier or app path subsequently timed out. A process sample shows the app’s main thread idle in the normal AppKit event loop, rather than blocked by script/extension work. Resetting the automation session did not restore access to the Settings window. This prevents live verification of settings forms, mouse activation, actual insertion into another app, Accessibility permission prompts, VoiceOver speech, IME composition, physical Polish/non-US shortcut recording, translated layout at large text sizes, and display/Spaces behavior.
 
 The earlier smoke check verified root command visibility, `1 km to m` → `1000 m`, and `ustawienia` → Open Settings. Those checks do not cover the remaining live interactions. Source attribution remains an intentional foreground-app approximation; deliberately detached subprocess descendants remain outside the runner’s lifecycle group.
+
+
+## Everyday workflow priorities (2026-10-13)
+
+The six suggested priorities are implemented. `swift test -c release` executes 177 tests across Kebloop and KebloopCore: 175 pass, two opt-in timing tests are skipped, and there are zero failures. The release bundle builds and passes the build script's signing verification. `git diff --check` passes.
+
+| Feature | Automated verification |
+| --- | --- |
+| Clipboard/emoji direct paste and plain text | Permission and secure-input gates; intended foreground app; clipboard revision; cancellation and invalid-target replacement; action applicability; retained clipboard removal workflow |
+| Running app controls and focus/hide hotkeys | Service builds; running-dependent action availability; shared hotkey registration/routing regression coverage; restart implementation waits for normal termination |
+| System actions | Restart/logout event IDs use macOS confirmation, not immediate logout |
+| Basic window management | Visible-frame halves, center, coordinate conversion for displays above/left, next-display clamping, greatest window/display intersection |
+| Calculator | Unit and duration conversions, mixed-unit addition/subtraction, known unit/currency ambiguity, named time zones, dated currency result with clean clipboard output, cache limits/expiry, mocked endpoint/response validation, request coalescing, stale offline fallback, persisted accepted history and distinct launcher identities |
+| Snippets | Legacy decoding, dynamic values/defaults, literal substitution, keyword uniqueness and boundaries, unresolved-trigger preservation, bounded buffer, deletion count excluding the suppressed delimiter, retained preview/cancel behavior |
+
+Native automation obtained an initial snapshot of the previously running app, then repeatedly returned `timeoutReached` for both AX and screenshot requests; reconnecting with the release bundle after a session reset also timed out. This is not native acceptance of the new release. Direct paste into real apps, typing expansion, app hide/restart behavior, permission dialogs, VoiceOver, physical global hotkeys, multi-display window moves, and supported-macOS coverage remain pending native verification. No force quit, restart/logout/sleep, or actual keystroke insertion was executed against user applications by the tests. Typing expansion remains off by default.
+
+The larger candidates are saved in the [roadmap](roadmap.md#larger-feature-backlog).

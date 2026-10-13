@@ -13,5 +13,5 @@
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
-<key>NSAppleEventsUsageDescription</key><string>Kebloop opens the macOS shutdown confirmation when you choose Shut Down.</string>
+<key>NSAppleEventsUsageDescription</key><string>Kebloop uses macOS automation for shutdown, restart, log out, sleep, mute, and appearance commands.</string>
 </dict></plist>

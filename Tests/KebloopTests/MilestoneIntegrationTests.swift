@@ -26,8 +26,8 @@ import XCTest
             func key(_ code: UInt16) throws -> NSEvent {
                 try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code))
             }
-            XCTAssertTrue(launcher.handleActionKey(try key(125)))
-            XCTAssertTrue(launcher.handleActionKey(try key(125)))
+            let removeIndex = try XCTUnwrap(launcher.visibleActionIdentifiers.firstIndex(of: .removeClipboardItem))
+            for _ in 0..<removeIndex { XCTAssertTrue(launcher.handleActionKey(try key(125))) }
             XCTAssertTrue(launcher.handleActionKey(try key(36)))
             XCTAssertEqual(clipboard.items.map(\.text), ["test clip keep"])
             XCTAssertEqual(launcher.currentQuery, "test clip")

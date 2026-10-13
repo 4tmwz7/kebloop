@@ -165,11 +165,14 @@ struct HelpView: View {
         case .snippets: L("Fill placeholders, preview, and copy reusable text.")
         case .scripts: L("Run reviewed local scripts with bounded output and cancellation.")
         case .extensions: L("Browse results and actions from enabled local extensions.")
-        case .clipboard: L("Browse and copy recently saved text. Turn recording on or off in Settings → Clipboard.")
+        case .clipboard: L("Browse and paste saved clipboard items. Command-Return copies; Command-Shift-Return pastes plain text.")
         case .quicklinks: L("Open saved websites, files, and folders. Use a keyword with text to pass it as an argument.")
-        case .emoji: L("Search emoji by name or category, move with arrow keys, and press Return to copy.")
+        case .emoji: L("Search emoji by name or category. Return pastes; Command-Return copies.")
         case .settings: L("Open Kebloop settings, including search, appearance, shortcuts, and profiles.")
         case .shutdown: L("Open the macOS shutdown confirmation.")
+        case .lock, .sleep, .restart, .logOut, .toggleMute, .toggleAppearance: L("Control your Mac. Restart and log out show macOS confirmation.")
+        case .leftHalf, .rightHalf, .maximizeWindow, .centerWindow, .restoreWindow, .nextDisplay: L("Arrange the previous application's window. Requires Accessibility permission.")
+        case .calculationHistory: L("Browse, copy, and clear calculations you accepted.")
         case .browse: L("Search the available built-in commands, quicklinks, and selected Apple Shortcuts.")
         case .help: L("Read command examples and see which features and shortcuts are currently available.")
         case .onboarding: L("Review the first-run choices for login startup, clipboard history, and optional Siri access.")
@@ -189,6 +192,7 @@ struct HelpView: View {
         case .emoji: L("emoji smile")
         case .settings: "settings"
         case .shutdown: "shutdown"
+        case .lock, .sleep, .restart, .logOut, .toggleMute, .toggleAppearance, .leftHalf, .rightHalf, .maximizeWindow, .centerWindow, .restoreWindow, .nextDisplay, .calculationHistory: command.aliases.first ?? command.rawValue
         case .browse: "commands"
         case .help: "help"
         case .onboarding: "welcome"

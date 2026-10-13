@@ -11,6 +11,9 @@ struct DateCalculationEngine {
 
     func evaluate(_ input: String, now: Date) -> SpecializedCalculation {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if ["now", "today"].contains(text.lowercased()), let parsed = parseDate(text, now: now) {
+            return .result(format(parsed.date, includesTime: parsed.includesTime))
+        }
 
         if let range = text.range(of: #"(?i)^date\s+difference\s+between\s+"#, options: .regularExpression) {
             return evaluateExplicitDifference(String(text[range.upperBound...]), now: now)
@@ -42,30 +45,24 @@ struct DateCalculationEngine {
                 return .failure("Use a valid date, such as 2026-10-12.")
             }
             let literal = String(text[amountRange]).replacingOccurrences(of: ",", with: ".")
-            guard let amount = Double(literal), amount.isFinite, amount.rounded(.towardZero) == amount,
-                  amount <= Double(Int.max), amount >= Double(Int.min) else {
+            let parts = literal.split(separator: ".", omittingEmptySubsequences: false)
+            guard parts.count == 1 || parts[1].allSatisfy({ $0 == "0" }) else {
                 return .failure("Date additions need a whole number of days, weeks, months, or years.")
             }
-            var amountValue = Int(amount)
-            if text[operationRange] == "-" { amountValue = -amountValue }
-            let unit = String(text[unitRange]).lowercased().trimmingCharacters(in: .whitespaces)
-            let component: Calendar.Component
-            switch unit {
-            case "day", "days": component = .day
-            case "week", "weeks": component = .weekOfYear
-            case "month", "months": component = .month
-            default: component = .year
-            }
-            guard let result = calendar.date(byAdding: component, value: amountValue, to: parsed.date) else {
+            guard let amount = Int(parts[0]) else {
                 return .failure("That date is outside the supported range.")
             }
-            return .result(format(result, includesTime: parsed.includesTime))
+            let amountValue = text[operationRange] == "-" ? -amount : amount
+            let unit = String(text[unitRange]).lowercased().trimmingCharacters(in: .whitespaces)
+            return add(amountValue, unit: unit, to: parsed.date, includesTime: parsed.includesTime)
         }
 
         if let match = firstMatch(of: #"(?i)^in\s+([0-9]+)\s+(days?|weeks?|months?|years?)\s*$"#, in: text),
            let amountRange = Range(match.range(at: 1), in: text),
            let unitRange = Range(match.range(at: 2), in: text) {
-            let amount = Int(text[amountRange]) ?? 0
+            guard let amount = Int(text[amountRange]) else {
+                return .failure("That date is outside the supported range.")
+            }
             let unit = String(text[unitRange]).lowercased()
             return add(amount, unit: unit, to: calendar.startOfDay(for: now), includesTime: false)
         }
@@ -73,7 +70,9 @@ struct DateCalculationEngine {
         if let match = firstMatch(of: #"(?i)^([0-9]+)\s+(days?|weeks?|months?|years?)\s+from\s+today\s*$"#, in: text),
            let amountRange = Range(match.range(at: 1), in: text),
            let unitRange = Range(match.range(at: 2), in: text) {
-            let amount = Int(text[amountRange]) ?? 0
+            guard let amount = Int(text[amountRange]) else {
+                return .failure("That date is outside the supported range.")
+            }
             let unit = String(text[unitRange]).lowercased()
             return add(amount, unit: unit, to: calendar.startOfDay(for: now), includesTime: false)
         }
@@ -115,15 +114,34 @@ struct DateCalculationEngine {
         case "month", "months": component = .month
         default: component = .year
         }
-        guard let result = calendar.date(byAdding: component, value: amount, to: date) else {
+        // Bound offsets before Foundation calendar arithmetic: extreme values can
+        // silently wrap or return the input date instead of reporting an error.
+        let maximumOffset: Int
+        switch component {
+        case .day: maximumOffset = 3_660_000
+        case .weekOfYear: maximumOffset = 522_000
+        case .month: maximumOffset = 119_988
+        default: maximumOffset = 9_999
+        }
+        guard (-maximumOffset...maximumOffset).contains(amount), isSupported(date),
+              let result = calendar.date(byAdding: component, value: amount, to: date),
+              isSupported(result),
+              amount == 0 || (amount > 0 ? result > date : result < date) else {
             return .failure("That date is outside the supported range.")
         }
         return .result(format(result, includesTime: includesTime))
     }
 
+    private func isSupported(_ date: Date) -> Bool {
+        guard date.timeIntervalSinceReferenceDate.isFinite else { return false }
+        let components = calendar.dateComponents([.era, .year], from: date)
+        return components.era == 1 && (1...9_999).contains(components.year ?? 0)
+    }
+
     private func parseDate(_ rawText: String, now: Date) -> ParsedDate? {
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         switch text.lowercased() {
+        case "now": return isSupported(now) ? ParsedDate(date: now, includesTime: true) : nil
         case "today": return ParsedDate(date: calendar.startOfDay(for: now), includesTime: false)
         case "tomorrow":
             guard let date = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)) else { return nil }
@@ -205,7 +223,7 @@ struct DateCalculationEngine {
 
     private func isDateCandidate(_ text: String) -> Bool {
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if ["today", "tomorrow", "yesterday"].contains(value.lowercased()) { return true }
+        if ["now", "today", "tomorrow", "yesterday"].contains(value.lowercased()) { return true }
         return firstMatch(of: #"^(?:[0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{2,4})(?:$|[ T])"#, in: value) != nil
     }
 

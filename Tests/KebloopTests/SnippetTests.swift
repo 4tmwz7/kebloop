@@ -84,11 +84,77 @@ final class SnippetTests: XCTestCase {
         XCTAssertEqual(try snippet.render(values: ["name": "{message}", "message": "Zażółć 😀"]), "Hi {message}, {message}! Zażółć 😀")
         XCTAssertThrowsError(try snippet.render(values: ["name": "A"]))
     }
+
+    func testPlaceholderDefaultsAndDynamicValuesRenderWithoutPrompting() throws {
+        let snippet = Snippet(name: "Reply", template: "Hi {name:friend}. {name} {date} {time} {clipboard}")
+        let date = ISO8601DateFormatter().date(from: "2024-01-02T03:04:00Z")!
+        let actual = try snippet.render(values: [:], date: date, locale: Locale(identifier: "en_US"), timeZone: TimeZone(secondsFromGMT: 0)!, clipboardText: "copied")
+        let dateFormatter = DateFormatter()
+        dateFormatter.locale = Locale(identifier: "en_US"); dateFormatter.timeZone = TimeZone(secondsFromGMT: 0); dateFormatter.dateStyle = .medium
+        let renderedDate = dateFormatter.string(from: date)
+        dateFormatter.dateStyle = .none; dateFormatter.timeStyle = .short
+        let renderedTime = dateFormatter.string(from: date)
+        XCTAssertEqual(actual, "Hi friend. friend \(renderedDate) \(renderedTime) copied")
+        XCTAssertEqual(snippet.placeholders, ["name"])
+        XCTAssertEqual(snippet.placeholderDefaults, ["name": "friend"])
+        XCTAssertTrue(snippet.canExpandAutomatically)
+        XCTAssertTrue(try snippet.render(values: ["name": "pal"], date: date, locale: Locale(identifier: "en_US"), timeZone: TimeZone(secondsFromGMT: 0)!, clipboardText: "copied").hasPrefix("Hi pal. pal"))
+
+        let unresolved = Snippet(name: "Prompt", template: "Hello {name} {other:default}")
+        XCTAssertFalse(unresolved.canExpandAutomatically)
+        XCTAssertThrowsError(try unresolved.render(values: [:], clipboardText: ""))
+        XCTAssertThrowsError(try Snippet(name: "Bad", template: "{date:tomorrow}").validate())
+        XCTAssertThrowsError(try Snippet(name: "Bad", template: "{name:a} {name:b}").validate())
+    }
+
+    func testKeywordValidationAndBoundedSpaceTrigger() throws {
+        let address = Snippet(name: "Address", template: "42 Main St", keyword: ";addr")
+        let prompted = Snippet(name: "Prompted", template: "Hello {name}", keyword: ";hello")
+        XCTAssertNoThrow(try Snippet.validateUniqueKeywords([address, prompted]))
+        XCTAssertThrowsError(try Snippet.validateUniqueKeywords([address, Snippet(name: "Other", template: "Other", keyword: ";ADDR")]))
+        XCTAssertThrowsError(try Snippet(name: "Bad", template: "Text", keyword: "not a keyword").validate())
+        XCTAssertEqual(SnippetExpansionPlan.eraseCount(for: ";addr"), 5) // The suppressed space is not backspaced.
+
+        var matcher = SnippetKeywordMatcher(maximumBufferLength: 12)
+        for character in "x;addr" { XCTAssertNil(matcher.record(String(character), snippets: [address])) }
+        XCTAssertNil(matcher.record(" ", snippets: [address])) // A trigger inside a word is ignored.
+        XCTAssertTrue(matcher.buffer.hasSuffix(" "))
+        matcher.reset()
+        for character in ";addr" { XCTAssertNil(matcher.record(String(character), snippets: [address])) }
+        XCTAssertEqual(matcher.record(" ", snippets: [address])?.id, address.id)
+        XCTAssertTrue(matcher.buffer.isEmpty)
+
+        for character in ";hello" { XCTAssertNil(matcher.record(String(character), snippets: [prompted])) }
+        XCTAssertNil(matcher.record(" ", snippets: [prompted])) // Missing defaults never trigger replacement.
+        XCTAssertTrue(matcher.buffer.isEmpty)
+
+        for character in "abcdefghijklmnop" { _ = matcher.record(String(character), snippets: []) }
+        XCTAssertEqual(matcher.buffer.count, 12)
+    }
+
+    func testLegacySnippetWithoutKeywordStillDecodes() throws {
+        let data = Data(#"{"id":"legacy","name":"Legacy","template":"Hello {name}"}"#.utf8)
+        let snippet = try JSONDecoder().decode(Snippet.self, from: data)
+        XCTAssertEqual(snippet.id, "legacy")
+        XCTAssertNil(snippet.keyword)
+        XCTAssertEqual(try snippet.render(values: ["name": "friend"]), "Hello friend")
+    }
+
+    @MainActor func testSnippetStoreRejectsKeywordConflictsWithoutChangingSavedItems() throws {
+        let suite = "SnippetKeywordConflict.\(UUID())", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SnippetStore(defaults: defaults)
+        try store.save(name: "Address", template: "42 Main St", keyword: ";addr")
+        XCTAssertThrowsError(try store.save(name: "Other", template: "Other", keyword: ";ADDR"))
+        XCTAssertEqual(store.snippets.map(\.name), ["Address"])
+        XCTAssertEqual(SnippetStore(defaults: defaults).snippets, store.snippets)
+    }
+
     @MainActor func testPersistenceConfigurationAndLegacyMigration() throws {
         let suite = "SnippetTests.\(UUID().uuidString)"; let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let snippets = SnippetStore(defaults: defaults)
-        try snippets.save(name: "Greeting", template: "Hello {name}")
+        try snippets.save(name: "Greeting", template: "Hello {name:friend}", keyword: ";hello")
         XCTAssertEqual(SnippetStore(defaults: defaults).snippets, snippets.snippets)
         let configuration = ConfigurationStore(defaults: defaults)
         let data = try configuration.exportData()

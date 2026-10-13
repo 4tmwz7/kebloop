@@ -12,15 +12,18 @@ Open apps, find files, run calculations, and reach your clipboard, quicklinks, a
 
 - **App search** with fuzzy matching, aliases, and custom app shortcuts.
 - **File search** powered by Spotlight, with Git ignore rules respected.
-- **Calculator** with functions, percentages, and copyable results.
-- **Clipboard history** for up to 200 text entries, with sensitive clipboard types excluded.
+- **Calculator** with functions, percentages, mixed units, durations, named time zones, cached currency conversions, and accepted-result history.
+- **Clipboard history** for text, images, and rich text, with pins, retention controls, sensitive-content exclusions, and direct or plain-text paste.
 - **Quicklinks** for websites, files, and folders.
 - **Emoji picker** with search, categories, and recents.
-- **Shut down your Mac** by typing `shutdown` and opening the macOS confirmation.
+- **App controls** with running indicators, hide, quit, confirmed force quit, restart, and focus/hide app shortcuts.
+- **System actions** for shutdown, lock, sleep, restart, log out, mute, and appearance.
+- **Window management** for halves, maximize, center, restore, and moving to the next display.
+- **Snippets** with prompted/default values, date/time/clipboard variables, and optional local keyword expansion.
 - **AI handoff** to ChatGPT, Claude, or Siri using your existing apps and accounts.
 - **Native appearance** with Liquid Glass on macOS 26+ and popover material on older releases.
 
-Core features run locally without a Kebloop account. AI handoff sends the query to your selected provider; no API key is needed.
+Core features run locally without a Kebloop account. Currency conversion fetches the requested currency pair from Frankfurter and caches rates for offline use. AI handoff sends the query to your selected provider; no API key is needed.
 
 ## Build and install
 
@@ -73,6 +76,9 @@ These are local development builds, not notarized distribution releases. A stabl
 | Close the launcher or return from a command | Escape |
 | Open settings | Command-comma |
 | Show selected result actions | Command-K |
+| Paste selected clipboard item / emoji | Return |
+| Copy selected clipboard item / emoji | Command-Return |
+| Paste clipboard item as plain text | Command-Shift-Return |
 | Send a query to your AI provider | Tab |
 
 Type **Clipboard History**, **Quicklinks**, **Emoji & Symbols**, or **Open Settings** to open a command. You can change the launcher shortcut in Settings.

@@ -26,6 +26,7 @@ struct PortableSettings: Codable {
         for command in scripts ?? [] { try command.validate() }; try unique((scripts ?? []).map(\.id))
         for manifest in extensions ?? [] { try manifest.validate() }; try unique((extensions ?? []).map(\.id))
         for snippet in snippets ?? [] { try snippet.validate() }; try unique((snippets ?? []).map(\.id))
+        try Snippet.validateUniqueKeywords(snippets ?? [])
         guard let launcher = launcherShortcutID == "custom" ? launcherCustomShortcut : Shortcut.choices.first(where: { $0.id == launcherShortcutID }), launcher.keyCode <= 127, launcher.modifiers & 0x1900 != 0 else { throw ConfigurationError.invalid("Unknown launcher shortcut.") }
         guard !appShortcuts.contains(where: { $0.keyCode == launcher.keyCode && $0.modifiers == launcher.modifiers }),
               !commandShortcuts.contains(where: { $0.keyCode == launcher.keyCode && $0.modifiers == launcher.modifiers }) else { throw ConfigurationError.invalid("A command or application shortcut conflicts with the launcher.") }

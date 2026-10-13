@@ -51,6 +51,74 @@ final class CalculatorTests: XCTestCase {
         }
     }
 
+    func testCurrencyConversionsUseCachedRatesAndShowTheirObservationDate() throws {
+        let now = date("2026-10-13T12:00:00Z")
+        let observation = date("2026-10-12T00:00:00Z")
+        let pair = CurrencyPair(base: "USD", quote: "EUR")!
+        let currentRate = CurrencyRateSnapshot(pair: pair, rate: 0.92, rateDate: observation, fetchedAt: now)
+        let calculator = CalculatorEngine(locale: Locale(identifier: "en_US"), timeZone: timeZone("UTC"), referenceDate: now)
+
+        guard case .result(let calculation) = calculator.evaluate("$100 to EUR", currencyRates: [currentRate]) else {
+            return XCTFail("Expected a currency conversion from a cached rate")
+        }
+        XCTAssertEqual(calculation.display, "92.00 EUR (rate dated Oct 12, 2026)")
+        XCTAssertEqual(calculation.clipboard, "92.00 EUR")
+        XCTAssertEqual(CalculatorEngine.currencyPair(in: "100 USD in euros"), pair)
+        XCTAssertNil(CalculatorEngine.currencyPair(in: "search for USD"))
+
+        let staleRate = CurrencyRateSnapshot(pair: pair, rate: 0.92, rateDate: observation, fetchedAt: now.addingTimeInterval(-25 * 60 * 60))
+        guard case .result(let staleResult) = calculator.evaluate("100 USD to EUR", currencyRates: [staleRate]) else {
+            return XCTFail("A saved rate should still be usable offline")
+        }
+        XCTAssertTrue(staleResult.display.contains("cached"))
+
+        guard case .failure(let message) = calculator.evaluate("100 USD to EUR") else {
+            return XCTFail("A missing pair should report that a rate is unavailable")
+        }
+        XCTAssertTrue(message.contains("No saved exchange rate"))
+        XCTAssertEqual(try result(for: "10 GBP to GBP"), "10.00 GBP")
+    }
+
+    func testDurationConversionsAndMixedUnitArithmetic() throws {
+        XCTAssertEqual(try result(for: "90 minutes to hours"), "1.5 h")
+        XCTAssertEqual(try result(for: "2 weeks in seconds"), "1209600 s")
+        XCTAssertEqual(try result(for: "2 km + 300 m"), "2.3 km")
+        XCTAssertEqual(try result(for: "2 m + 30 cm to cm"), "230 cm")
+        XCTAssertEqual(try result(for: "1 hour + 30 minutes"), "1.5 h")
+        XCTAssertEqual(try result(for: "3 ft - 4 in"), "2.66666666667 ft")
+
+        guard case .failure = calculator.evaluate("2 m + 3 seconds") else {
+            return XCTFail("Mixed dimensions should not be added")
+        }
+        guard case .failure = calculator.evaluate("20 °C + 5 °F") else {
+            return XCTFail("Absolute temperatures should not be added")
+        }
+    }
+
+    func testNamedTimeZoneLookupsAndConversionsUseCurrentDateRules() throws {
+        let now = date("2026-10-13T12:00:00Z")
+        let calculator = CalculatorEngine(locale: Locale(identifier: "en_US"), timeZone: timeZone("UTC"), referenceDate: now)
+
+        let tokyo = try result(for: "time in Tokyo", using: calculator)
+        XCTAssertTrue(tokyo.contains("9:00"), tokyo)
+        XCTAssertTrue(tokyo.contains("GMT+09:00"), tokyo)
+
+        let london = try result(for: "9:30 AM in New York to London", using: calculator)
+        XCTAssertTrue(london.contains("2:30"), london)
+        XCTAssertTrue(london.contains("GMT+01:00"), london)
+
+        let daylightSaving = try result(for: "9 AM PST to CET", using: calculator)
+        XCTAssertTrue(daylightSaving.contains("6:00"), daylightSaving)
+        XCTAssertTrue(daylightSaving.contains("GMT+02:00"), daylightSaving)
+
+        guard case .incomplete = calculator.evaluate("time in") else {
+            return XCTFail("An unfinished named-zone lookup should remain incomplete")
+        }
+        guard case .failure = calculator.evaluate("10:00 AM in Nowhere to London") else {
+            return XCTFail("Unknown zones should report an error")
+        }
+    }
+
     func testEveryDocumentedUnitAliasIsRecognized() {
         let aliases: [(String, String)] = [
             ("m", "m"), ("meter", "m"), ("meters", "m"), ("metre", "m"), ("metres", "m"),
@@ -145,6 +213,9 @@ final class CalculatorTests: XCTestCase {
         guard case .incomplete = calculator.evaluate("2 km to") else {
             return XCTFail("An unfinished conversion should remain incomplete")
         }
+        guard case .incomplete = calculator.evaluate("2 m + 30 cm to") else {
+            return XCTFail("An unfinished mixed-unit target should remain incomplete")
+        }
         guard case .incomplete = calculator.evaluate("today +") else {
             return XCTFail("An unfinished date addition should remain incomplete")
         }
@@ -228,6 +299,12 @@ final class CalculatorTests: XCTestCase {
             fatalError("Missing test time zone \(identifier)")
         }
         return zone
+    }
+
+    private func date(_ value: String) -> Date {
+        let formatter = ISO8601DateFormatter()
+        guard let date = formatter.date(from: value) else { fatalError("Invalid test timestamp \(value)") }
+        return date
     }
 }
 

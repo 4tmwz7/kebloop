@@ -36,9 +36,10 @@ private final class SearchField: NSTextField {
 }
 
 private enum LauncherMode: String {
-    case root, clipboard, quicklinks, webSearch, snippets
+    case root, clipboard, quicklinks, webSearch, snippets, calculationHistory
     var title: String {
         switch self {
+        case .calculationHistory: return L("Calculator History")
         case .snippets: return L("Snippets")
         case .root: return L("Results")
         case .clipboard: return L("Clipboard History")
@@ -48,6 +49,7 @@ private enum LauncherMode: String {
     }
     var placeholder: String {
         switch self {
+        case .calculationHistory: return L("Search calculation history…")
         case .snippets: return L("Search snippets…")
         case .root: return L("Search apps, links, or commands…")
         case .clipboard: return L("Search clipboard history…")
@@ -60,6 +62,7 @@ private enum LauncherMode: String {
 private enum LauncherResult {
     case application(IndexedApplication)
     case calculation(CalculationResult)
+    case historicalCalculation(CalculationHistoryEntry)
     case command(LauncherCommand)
     case quicklink(Quicklink)
     case clipboard(ClipboardEntry)
@@ -73,6 +76,7 @@ private enum LauncherResult {
         switch self {
         case .application(let app): return app.id
         case .calculation: return "calculator"
+        case .historicalCalculation(let entry): return "calculation-history:" + entry.id
         case .command(let command): return "command:\(command.rawValue)"
         case .quicklink(let link): return "link:\(link.id)"
         case .script(let script): return script.commandID
@@ -158,6 +162,10 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
     private static let performanceLog = OSLog(subsystem: "com.kebloop.launcher", category: .pointsOfInterest)
     private let search = AppSearch()
     private let calculator = CalculatorEngine()
+    private let currencyRates: CurrencyRateStore
+    private let calculationHistory: CalculationHistoryStore
+    private let pasteService = PasteService()
+    private let windowManagement = WindowManagementService()
     private let panel: LauncherPanel
     private let input = SearchField()
     private let rows = FlippedStackView()
@@ -178,8 +186,10 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
     private var outsideMonitor: Any?
     private var message: String?
 
-    init(index: ApplicationIndex, quicklinks: QuicklinkStore, clipboard: ClipboardHistoryStore, aliases: AppAliasStore, ai: AIHandoffService, personalization: PersonalizationStore? = nil, appleShortcuts: AppleShortcutsService? = nil, snippets: SnippetStore? = nil, scripts: ScriptCommandStore? = nil, extensions: ExtensionStore? = nil, launchApplication: ((IndexedApplication, @escaping (Error?) -> Void) -> Void)? = nil) {
+    init(index: ApplicationIndex, quicklinks: QuicklinkStore, clipboard: ClipboardHistoryStore, aliases: AppAliasStore, ai: AIHandoffService, personalization: PersonalizationStore? = nil, appleShortcuts: AppleShortcutsService? = nil, snippets: SnippetStore? = nil, scripts: ScriptCommandStore? = nil, extensions: ExtensionStore? = nil, currencyRates: CurrencyRateStore? = nil, calculationHistory: CalculationHistoryStore? = nil, launchApplication: ((IndexedApplication, @escaping (Error?) -> Void) -> Void)? = nil) {
         self.index = index
+        self.currencyRates = currencyRates ?? CurrencyRateStore()
+        self.calculationHistory = calculationHistory ?? CalculationHistoryStore()
         self.launchApplication = launchApplication ?? index.launch
         self.quicklinks = quicklinks
         self.clipboard = clipboard
@@ -222,11 +232,24 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
             DispatchQueue.main.async { guard let self, self.panel.isVisible else { return }; self.updateResults(preserveSelection: true) }
         }.store(in: &subscriptions)
         NotificationCenter.default.publisher(for: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification).sink { [weak self] _ in self?.applyPersonalization() }.store(in: &subscriptions)
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification, NSWorkspace.didHideApplicationNotification, NSWorkspace.didUnhideApplicationNotification] {
+            NSWorkspace.shared.notificationCenter.publisher(for: name).receive(on: DispatchQueue.main).sink { [weak self] _ in
+                guard let self, self.panel.isVisible else { return }; self.render()
+            }.store(in: &subscriptions)
+        }
         index.$applications.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in guard let self, self.panel.isVisible else { return }; self.updateResults(preserveSelection: true) }.store(in: &subscriptions)
         index.$iconRevision.dropFirst().throttle(for: .milliseconds(30), scheduler: DispatchQueue.main, latest: true).sink { [weak self] _ in
             guard let self, self.panel.isVisible else { return }; self.render()
         }.store(in: &subscriptions)
         quicklinks.$links.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in guard let self, self.panel.isVisible else { return }; self.updateResults(preserveSelection: true) }.store(in: &subscriptions)
+        self.currencyRates.$snapshots.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in
+            guard let self, self.panel.isVisible, self.mode == .root else { return }
+            self.message = nil; self.updateResults(preserveSelection: true)
+        }.store(in: &subscriptions)
+        self.calculationHistory.$entries.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in
+            guard let self, self.panel.isVisible, self.mode == .calculationHistory else { return }
+            self.updateResults(preserveSelection: true)
+        }.store(in: &subscriptions)
         clipboard.$items.dropFirst().receive(on: DispatchQueue.main).sink { [weak self] _ in
             guard let self, self.panel.isVisible, self.mode == .clipboard else { return }
             self.updateResults(preserveSelection: true)
@@ -277,6 +300,11 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
             case 125: self.moveSelection(1); return nil
             case 126: self.moveSelection(-1); return nil
             case 36, 76:
+                if self.mode == .clipboard, event.modifierFlags.contains(.command), self.results.indices.contains(self.selection) {
+                    let action: ResultAction = event.modifierFlags.contains(.shift) ? .pastePlainText : .copy
+                    self.performResultAction(action, resultID: self.results[self.selection].id)
+                    return nil
+                }
                 if let button = self.panel.firstResponder as? ResultButton { button.invoke?() }
                 else if let button = self.panel.firstResponder as? NSButton { button.performClick(nil) }
                 else { self.performSelected() }
@@ -440,6 +468,7 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
         else { show() }
     }
     func show() {
+        pasteService.cancel()
         presentationRevision &+= 1
         if let frontmost = NSWorkspace.shared.frontmostApplication,
            frontmost.processIdentifier != ProcessInfo.processInfo.processIdentifier {
@@ -492,15 +521,37 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
     }
 
     func setQuery(_ query: String) {
+        if mode == .root, CalculatorEngine.currencyPair(in: query) != nil {
+            Task { @MainActor [weak self] in
+                await self?.currencyRates.refreshIfNeeded(for: query)
+            }
+        }
         if input.stringValue != query { input.stringValue = query }
         message = nil
         if mode == .root {
             if !personalization.settings.filesEnabled { files.stop() }
-            else if case .result = calculator.evaluate(input.stringValue) { files.stop() }
+            else if case .result = calculator.evaluate(input.stringValue, currencyRates: currencyRates.snapshots) { files.stop() }
             else { files.search(input.stringValue) }
         }
         updateResults()
     }
+    var previousApplication: NSRunningApplication? { previousApp }
+
+    func pasteIntoPreviousApplication() {
+        let target = previousApp
+        dismiss(restoreFocus: false)
+        pasteService.paste(into: target) { [weak self] failure in
+            guard let failure else { return }
+            self?.showPasteFeedback(failure.localizedDescription)
+        }
+    }
+
+    private func showPasteFeedback(_ text: String) {
+        let alert = NSAlert(); alert.messageText = L("Direct Paste"); alert.informativeText = text
+        alert.addButton(withTitle: L("OK"))
+        alert.runModal()
+    }
+
     func restorePreviousFocus() {
         previousApp?.activate(options: [])
     }
@@ -541,12 +592,14 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
                 results += files.results.filter { personalization.allowsFile(path: $0.path) }.prefix(12).map(LauncherResult.file)
                 if config.linksEnabled, let resolved = quicklinks.resolve(query: query) { results.insert(.quicklink(resolved.link), at: 0); results = uniqueResults(results) }
                 if config.linksEnabled, results.isEmpty, quicklinks.fallbackURL(query: query) != nil { results.append(.webSearch(query)) }
-                switch calculator.evaluate(query) {
+                switch calculator.evaluate(query, currencyRates: currencyRates.snapshots) {
                 case .result(let result): results.insert(.calculation(result), at: 0)
                 case .failure(let error): message = error
                 case .none, .incomplete: break
                 }
             }
+        case .calculationHistory:
+            results = calculationHistory.entries.filter { query.isEmpty || $0.expression.localizedCaseInsensitiveContains(query) || $0.display.localizedCaseInsensitiveContains(query) }.map(LauncherResult.historicalCalculation)
         case .snippets:
             results = rank(snippets.snippets.map(LauncherResult.snippet), query: query)
         case .webSearch:
@@ -643,7 +696,7 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
                 icon = index.icon(for: app) ?? NSImage(systemSymbolName: "app", accessibilityDescription: nil)
                 title = app.name
                 let hasDuplicateName = index.applications.contains { $0.id != app.id && $0.name == app.name }
-                subtitle = hasDuplicateName ? NSString(string: app.path).abbreviatingWithTildeInPath : "Application"
+                subtitle = (hasDuplicateName ? NSString(string: app.path).abbreviatingWithTildeInPath : L("Application")) + (ApplicationControlService.isRunning(app) ? " · " + L("Running") : "")
                 action = L("Open")
             case .command(let command):
                 icon = NSImage(systemSymbolName: command.symbol, accessibilityDescription: nil)
@@ -679,12 +732,15 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
                 icon = NSImage(systemSymbolName: "clipboard", accessibilityDescription: nil)
                 title = (entry.isPinned ? "📌 " : "") + entry.preview
                 subtitle = entry.date.formatted(date: .abbreviated, time: .shortened)
-                action = L("Copy")
+                action = L("Paste")
             case .file(let file):
                 icon = NSImage(systemSymbolName: "doc", accessibilityDescription: nil)
                 title = file.name
                 subtitle = NSString(string: file.path).abbreviatingWithTildeInPath
                 action = L("Open")
+            case .historicalCalculation(let entry):
+                icon = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: nil)
+                title = entry.display; subtitle = entry.expression + " · " + entry.acceptedAt.formatted(date: .abbreviated, time: .shortened); action = L("Copy Answer")
             case .calculation(let result):
                 icon = NSImage(systemSymbolName: "equal.square", accessibilityDescription: nil)
                 title = result.display
@@ -865,8 +921,8 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
             let title: String
             if action == .open {
                 switch result {
-                case .clipboard: title = L("Copy")
-                case .calculation: title = L("Copy Answer")
+                case .clipboard: title = L("Paste")
+                case .calculation, .historicalCalculation: title = L("Copy Answer")
                 case .appleShortcut: title = L("Run")
                 case .webSearch: title = L("Search")
                 default: title = action.title
@@ -883,16 +939,21 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
         case .appleShortcut: kind = .appleShortcut
         default: kind = .other
         }
+        if mode == .calculationHistory {
+            add(.open); add(.clearCalculationHistory); return items
+        }
         if case .script = result { add(.open); add(.runWithInput); return items }
         if case .clipboard(let entry) = result {
-            for action in ResultAction.available(kind: .clipboard, pinned: entry.isPinned) {
+            for action in ResultAction.available(kind: .clipboard, pinned: entry.isPinned, hasPlainText: !entry.text.isEmpty) {
                 if action == .pin || action == .unpin {
                     items.append(ActionMenuItem(action: action, title: entry.isPinned ? L("Unpin Clipboard Item") : L("Pin Clipboard Item")))
                 } else { add(action) }
             }
             return items
         }
-        for action in ResultAction.available(kind: kind, pinned: personalization.isPinned(id: result.id)) { add(action) }
+        let running: Bool
+        if case .application(let app) = result { running = ApplicationControlService.isRunning(app) } else { running = false }
+        for action in ResultAction.available(kind: kind, pinned: personalization.isPinned(id: result.id), running: running) { add(action) }
         return items
     }
 
@@ -917,6 +978,7 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
     }
 
     var isShowingActions: Bool { actionsMenu.isVisible }
+    var visibleActionIdentifiers: [ResultAction] { actionsMenu.items.map(\.action) }
     @discardableResult
     func handleActionKey(_ event: NSEvent) -> Bool { actionsMenu.handleKey(event) }
 
@@ -933,6 +995,42 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
             guard case .clipboard(let entry) = result else { return }
             clipboard.remove(id: entry.id)
             updateResults(preserveSelection: true)
+        case .clearCalculationHistory:
+            let alert = NSAlert(); alert.messageText = L("Clear calculator history?")
+            alert.informativeText = L("All accepted calculations will be removed.")
+            alert.addButton(withTitle: L("Clear History")); alert.addButton(withTitle: L("Cancel"))
+            alert.buttons[0].hasDestructiveAction = true
+            isConfirmingClear = true; let response = alert.runModal(); isConfirmingClear = false
+            if response == .alertFirstButtonReturn { calculationHistory.clear(); updateResults() }
+            focusInput()
+        case .copy:
+            guard case .clipboard(let entry) = result else { return }
+            clipboard.copy(entry); dismiss()
+        case .pastePlainText:
+            guard case .clipboard(let entry) = result, !entry.text.isEmpty else { return }
+            NSPasteboard.general.clearContents(); NSPasteboard.general.setString(entry.text, forType: .string)
+            pasteIntoPreviousApplication()
+        case .quitApplication, .forceQuitApplication, .restartApplication, .hideApplication:
+            guard case .application(let app) = result else { return }
+            if action == .forceQuitApplication {
+                let alert = NSAlert(); alert.messageText = L("Force Quit Application…")
+                alert.informativeText = app.name + "\n" + L("Unsaved changes may be lost.")
+                alert.addButton(withTitle: L("Force Quit")); alert.addButton(withTitle: L("Cancel"))
+                alert.buttons[0].hasDestructiveAction = true
+                isConfirmingClear = true; let response = alert.runModal(); isConfirmingClear = false
+                guard response == .alertFirstButtonReturn else { return }
+            }
+            let operation: ApplicationControlService.Action
+            switch action {
+            case .forceQuitApplication: operation = .forceQuit
+            case .restartApplication: operation = .restart
+            case .hideApplication: operation = .hide
+            default: operation = .quit
+            }
+            let context = beginExternalAction()
+            ApplicationControlService.perform(operation, for: app) { [weak self] error in
+                if let error { self?.showExternalActionError(error.localizedDescription, context: context) }
+            }
         case .open: performSelected()
         case .runWithInput:
             if case .script(let script) = result {
@@ -1021,6 +1119,7 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
 
     private var emptyMessage: String {
         switch mode {
+        case .calculationHistory: return L("Copy a calculation to start your history")
         case .snippets: return L("Add snippets in Settings")
         case .root: return files.isSearching ? "Searching files…" : (index.isRefreshing ? "Finding your apps…" : "No results")
         case .clipboard:
@@ -1066,7 +1165,23 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
             let context = beginExternalAction()
             if !NSWorkspace.shared.open(url) { showExternalActionError("Couldn’t open web search.", context: context) }
         case .command(let command):
+            if let action = command.systemAction {
+                let context = beginExternalAction()
+                Task { @MainActor [weak self] in
+                    do { try await SystemActionService.perform(action) }
+                    catch { self?.showExternalActionError(error.localizedDescription, context: context) }
+                }
+                return
+            }
+            if let action = command.windowAction {
+                let target = previousApp
+                let context = beginExternalAction()
+                do { try windowManagement.perform(action, application: target); target?.activate(options: []) }
+                catch { showExternalActionError(error.localizedDescription, context: context) }
+                return
+            }
             switch command {
+            case .calculationHistory: enter(.calculationHistory)
             case .snippets: enter(.snippets)
             case .scripts, .extensions: onCommand?(command)
             case .clipboard: enter(.clipboard)
@@ -1075,6 +1190,7 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
             case .settings: onSettings?()
             case .webSearch: enter(.webSearch)
             case .browse, .help, .onboarding, .profiles, .appleShortcuts: onCommand?(command)
+            case .lock, .sleep, .restart, .logOut, .toggleMute, .toggleAppearance, .leftHalf, .rightHalf, .maximizeWindow, .centerWindow, .restoreWindow, .nextDisplay: break
             case .shutdown:
                 do {
                     try ShutdownService.requestConfirmation()
@@ -1101,14 +1217,19 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
             isConfirmingClear = true
             let prepared = SnippetPresenter.prepare(snippet)
             isConfirmingClear = false
-            if let prepared { dismiss(); if prepared.insert { SnippetPresenter.paste() } } else { focusInput() }
+            if let prepared { if prepared.insert { pasteIntoPreviousApplication() } else { dismiss() } } else { focusInput() }
         case .clipboard(let entry):
             clipboard.copy(entry)
-            dismiss()
+            pasteIntoPreviousApplication()
         case .file(let file):
             let context = beginExternalAction()
             if !NSWorkspace.shared.open(file.url) { showExternalActionError("Couldn’t open this file.", context: context) }
+        case .historicalCalculation(let entry):
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(entry.result.clipboard, forType: .string)
+            dismiss()
         case .calculation(let result):
+            calculationHistory.recordAccepted(result)
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(result.clipboard, forType: .string)
             dismiss()

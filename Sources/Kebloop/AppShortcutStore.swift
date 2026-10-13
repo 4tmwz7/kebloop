@@ -79,8 +79,8 @@ final class AppShortcutStore: ObservableObject {
         guard isEnabled(binding) else { hotkey.unregisterBinding(id: binding.id); errors[binding.id] = nil; return true }
         let success = hotkey.registerBinding(id: binding.id, keyCode: binding.keyCode, modifiers: binding.modifiers) { [weak self] in
             guard let self else { return }
-            self.index.launch(IndexedApplication(name: binding.appName, path: binding.appPath)) { [weak self] error in
-                if let error { self?.errors[binding.id] = error.localizedDescription }
+            ApplicationControlService.perform(.toggleFocus, for: IndexedApplication(name: binding.appName, path: binding.appPath)) { [weak self] error in
+                self?.errors[binding.id] = error?.localizedDescription
             }
         }
         errors[binding.id] = success ? nil : "Shortcut unavailable. It may be used by macOS or another app."

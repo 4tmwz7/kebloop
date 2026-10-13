@@ -7,6 +7,13 @@ struct ActionMenuItem: Identifiable {
     var id: String { action.rawValue }
     var symbol: String {
         switch action {
+        case .clearCalculationHistory: "trash"
+        case .copy: "doc.on.doc"
+        case .pastePlainText: "doc.plaintext"
+        case .quitApplication: "xmark.circle"
+        case .forceQuitApplication: "exclamationmark.octagon"
+        case .restartApplication: "arrow.clockwise"
+        case .hideApplication: "eye.slash"
         case .removeClipboardItem: "trash"
         case .open: "arrow.up.forward"
         case .reveal: "folder"

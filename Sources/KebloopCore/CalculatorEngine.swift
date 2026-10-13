@@ -7,7 +7,7 @@ public enum CalculationOutcome {
     case failure(String)
 }
 
-public struct CalculationResult: Equatable {
+public struct CalculationResult: Equatable, Sendable {
     public let expression: String
     public let display: String
     public let clipboard: String
@@ -34,7 +34,7 @@ public struct CalculatorEngine {
         self.referenceDate = referenceDate
     }
 
-    public func evaluate(_ input: String) -> CalculationOutcome {
+    public func evaluate(_ input: String, currencyRates: [CurrencyRateSnapshot] = []) -> CalculationOutcome {
         let expression = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !expression.isEmpty else { return .none }
 
@@ -50,6 +50,36 @@ public struct CalculatorEngine {
             return .incomplete
         case .result(let display):
             return .result(CalculationResult(expression: expression, display: display, clipboard: display))
+        case .resultWithClipboard(let display, let clipboard):
+            return .result(CalculationResult(expression: expression, display: display, clipboard: clipboard))
+        case .failure(let message):
+            return .failure(message)
+        }
+
+        let timeZoneCalculator = TimeZoneCalculationEngine(locale: locale)
+        switch timeZoneCalculator.evaluate(expression, now: referenceDate ?? Date()) {
+        case .notHandled:
+            break
+        case .incomplete:
+            return .incomplete
+        case .result(let display):
+            return .result(CalculationResult(expression: expression, display: display, clipboard: display))
+        case .resultWithClipboard(let display, let clipboard):
+            return .result(CalculationResult(expression: expression, display: display, clipboard: clipboard))
+        case .failure(let message):
+            return .failure(message)
+        }
+
+        let currencyCalculator = CurrencyConversionEngine(locale: locale)
+        switch currencyCalculator.evaluate(expression, rates: currencyRates, now: referenceDate ?? Date()) {
+        case .notHandled:
+            break
+        case .incomplete:
+            return .incomplete
+        case .result(let display):
+            return .result(CalculationResult(expression: expression, display: display, clipboard: display))
+        case .resultWithClipboard(let display, let clipboard):
+            return .result(CalculationResult(expression: expression, display: display, clipboard: clipboard))
         case .failure(let message):
             return .failure(message)
         }
@@ -62,6 +92,8 @@ public struct CalculatorEngine {
             return .incomplete
         case .result(let display):
             return .result(CalculationResult(expression: expression, display: display, clipboard: display))
+        case .resultWithClipboard(let display, let clipboard):
+            return .result(CalculationResult(expression: expression, display: display, clipboard: clipboard))
         case .failure(let message):
             return .failure(message)
         }
@@ -80,6 +112,12 @@ public struct CalculatorEngine {
         } catch {
             return .failure("Could not evaluate this expression.")
         }
+    }
+
+    /// Returns the currency pair in a conversion query, allowing the UI to refresh rates
+    /// asynchronously without doing any network work in the typing path.
+    public static func currencyPair(in input: String) -> CurrencyPair? {
+        CurrencyConversionEngine.pair(in: input)
     }
 
     private static func looksLikeMath(_ input: String) -> Bool {

@@ -4,6 +4,7 @@ enum SpecializedCalculation {
     case notHandled
     case incomplete
     case result(String)
+    case resultWithClipboard(display: String, clipboard: String)
     case failure(String)
 }
 
@@ -14,43 +15,118 @@ struct UnitConversionEngine {
         self.locale = locale
     }
 
+    func recognizesUnit(named name: String) -> Bool {
+        unit(named: name) != nil
+    }
+
     func evaluate(_ input: String) -> SpecializedCalculation {
         let separators = matches(of: #"(?i)\s+(to|in|as)(?=\s|$)"#, in: input)
-        guard !separators.isEmpty else { return .notHandled }
+        if !separators.isEmpty {
+            for match in separators.reversed() {
+                guard let sourceRange = Range(match.range, in: input) else { continue }
+                let prefix = String(input[..<sourceRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                let targetText = String(input[sourceRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if targetText.isEmpty {
+                    if splitArithmetic(prefix) != nil,
+                       case .result = evaluateMixedArithmetic(prefix) { return .incomplete }
+                    if separators.count == 1, splitArithmetic(input) != nil {
+                        return evaluateMixedArithmetic(input)
+                    }
+                    if let source = parseQuantity(prefix), unit(named: source.unit) != nil { return .incomplete }
+                    continue
+                }
+                if splitArithmetic(prefix) != nil {
+                    return evaluateMixedArithmetic(prefix, targetUnitName: targetText)
+                }
+                guard let source = parseQuantity(prefix) else { continue }
 
-        for match in separators.reversed() {
-            guard let sourceRange = Range(match.range, in: input) else { continue }
-            let prefix = String(input[..<sourceRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let source = parseQuantity(prefix) else { continue }
+                guard let sourceUnit = unit(named: source.unit) else {
+                    return .failure("Unknown unit “\(source.unit)”.")
+                }
+                guard let targetUnit = unit(named: targetText) else {
+                    return .failure("Unknown unit “\(targetText)”.")
+                }
+                guard sourceUnit.dimension == targetUnit.dimension else {
+                    return .failure("Those units measure different things.")
+                }
 
-            let targetText = String(input[sourceRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
-            if targetText.isEmpty { return .incomplete }
-
-            guard let sourceUnit = unit(named: source.unit) else {
-                return .failure("Unknown unit “\(source.unit)”.")
+                let baseValue = source.value * sourceUnit.scale + sourceUnit.offset
+                guard baseValue.isFinite else {
+                    return .failure("The converted value is outside the supported range.")
+                }
+                if sourceUnit.dimension == .temperature, baseValue < -0.0000001 {
+                    return .failure("That temperature is below absolute zero.")
+                }
+                let value = (baseValue - targetUnit.offset) / targetUnit.scale
+                guard value.isFinite else {
+                    return .failure("The converted value is outside the supported range.")
+                }
+                return .result("\(format(value, locale: locale)) \(targetUnit.symbol)")
             }
-            guard let targetUnit = unit(named: targetText) else {
-                return .failure("Unknown unit “\(targetText)”.")
-            }
-            guard sourceUnit.dimension == targetUnit.dimension else {
-                return .failure("Those units measure different things.")
-            }
-
-            let baseValue = source.value * sourceUnit.scale + sourceUnit.offset
-            guard baseValue.isFinite else {
-                return .failure("The converted value is outside the supported range.")
-            }
-            if sourceUnit.dimension == .temperature, baseValue < -0.0000001 {
-                return .failure("That temperature is below absolute zero.")
-            }
-            let value = (baseValue - targetUnit.offset) / targetUnit.scale
-            guard value.isFinite else {
-                return .failure("The converted value is outside the supported range.")
-            }
-            return .result("\(format(value, locale: locale)) \(targetUnit.symbol)")
         }
 
-        return .notHandled
+        return evaluateMixedArithmetic(input)
+    }
+
+    private func evaluateMixedArithmetic(_ input: String, targetUnitName: String? = nil) -> SpecializedCalculation {
+        guard let expression = splitArithmetic(input), expression.operators.count > 0 else { return .notHandled }
+        guard let first = parseQuantity(expression.terms[0]), let firstUnit = unit(named: first.unit) else { return .notHandled }
+        guard firstUnit.dimension != .temperature else {
+            return .failure("Adding or subtracting absolute temperatures is not supported.")
+        }
+
+        var total = first.value * firstUnit.scale
+        guard total.isFinite else { return .failure("The result is outside the supported numeric range.") }
+        for index in expression.operators.indices {
+            guard let quantity = parseQuantity(expression.terms[index + 1]) else {
+                return .failure("Each value needs a unit, such as “2 m + 30 cm”.")
+            }
+            guard let currentUnit = unit(named: quantity.unit) else {
+                return .failure("Unknown unit “\(quantity.unit)”.")
+            }
+            guard currentUnit.dimension == firstUnit.dimension else {
+                return .failure("Those units measure different things.")
+            }
+            let baseValue = quantity.value * currentUnit.scale
+            guard baseValue.isFinite else { return .failure("The result is outside the supported numeric range.") }
+            total += expression.operators[index] == "+" ? baseValue : -baseValue
+            guard total.isFinite else { return .failure("The result is outside the supported numeric range.") }
+        }
+
+        let resultUnit: UnitDefinition
+        if let targetUnitName {
+            guard let target = unit(named: targetUnitName) else { return .failure("Unknown unit “\(targetUnitName)”.") }
+            guard target.dimension == firstUnit.dimension else { return .failure("Those units measure different things.") }
+            resultUnit = target
+        } else {
+            resultUnit = firstUnit
+        }
+
+        let value = total / resultUnit.scale
+        guard value.isFinite else { return .failure("The result is outside the supported numeric range.") }
+        return .result("\(format(value, locale: locale)) \(resultUnit.symbol)")
+    }
+
+    private func splitArithmetic(_ input: String) -> (terms: [String], operators: [String])? {
+        var terms: [String] = []
+        var operators: [String] = []
+        var termStart = input.startIndex
+
+        for index in input.indices {
+            let character = input[index]
+            guard character == "+" || character == "-" else { continue }
+            let previous = index == input.startIndex ? nil : input[input.index(before: index)]
+            if previous == "e" || previous == "E" { continue }
+            let prefix = input[..<index].trimmingCharacters(in: .whitespacesAndNewlines)
+            if prefix.isEmpty || ["+", "-", "*", "/", "("].contains(String(prefix.last ?? " ")) { continue }
+            terms.append(String(input[termStart..<index]).trimmingCharacters(in: .whitespacesAndNewlines))
+            operators.append(String(character))
+            termStart = input.index(after: index)
+        }
+
+        guard !operators.isEmpty else { return nil }
+        terms.append(String(input[termStart...]).trimmingCharacters(in: .whitespacesAndNewlines))
+        return (terms, operators)
     }
 
     private func parseQuantity(_ text: String) -> (value: Double, unit: String)? {
@@ -124,7 +200,7 @@ struct UnitConversionEngine {
         add(UnitDefinition(symbol: "mi", dimension: length, scale: 1_609.344), aliases: ["mi", "mile", "miles"])
         add(UnitDefinition(symbol: "yd", dimension: length, scale: 0.9144), aliases: ["yd", "yard", "yards"])
         add(UnitDefinition(symbol: "ft", dimension: length, scale: 0.3048), aliases: ["ft", "foot", "feet"])
-        add(UnitDefinition(symbol: "in", dimension: length, scale: 0.0254), aliases: ["in", "inch", "inches"])
+        add(UnitDefinition(symbol: "in", dimension: length, scale: 0.0254), aliases: ["in", "inch", "inches", "inchs"])
 
         let mass = UnitDimension.mass
         add(UnitDefinition(symbol: "g", dimension: mass, scale: 1), aliases: ["g", "gram", "grams"])
@@ -134,6 +210,14 @@ struct UnitConversionEngine {
         add(UnitDefinition(symbol: "lb", dimension: mass, scale: 453.59237), aliases: ["lb", "lbs", "pound", "pounds"])
         add(UnitDefinition(symbol: "oz", dimension: mass, scale: 28.349523125), aliases: ["oz", "ounce", "ounces"])
         add(UnitDefinition(symbol: "st", dimension: mass, scale: 6_350.29318), aliases: ["st", "stone", "stones"])
+
+        let duration = UnitDimension.duration
+        add(UnitDefinition(symbol: "ms", dimension: duration, scale: 0.001), aliases: ["ms", "millisecond", "milliseconds"])
+        add(UnitDefinition(symbol: "s", dimension: duration, scale: 1), aliases: ["s", "sec", "second", "seconds"])
+        add(UnitDefinition(symbol: "min", dimension: duration, scale: 60), aliases: ["min", "minute", "minutes"])
+        add(UnitDefinition(symbol: "h", dimension: duration, scale: 3_600), aliases: ["h", "hr", "hrs", "hour", "hours"])
+        add(UnitDefinition(symbol: "d", dimension: duration, scale: 86_400), aliases: ["d", "day", "days"])
+        add(UnitDefinition(symbol: "wk", dimension: duration, scale: 604_800), aliases: ["wk", "wks", "week", "weeks"])
 
         let temperature = UnitDimension.temperature
         add(UnitDefinition(symbol: "°C", dimension: temperature, scale: 1, offset: 273.15), aliases: ["c", "°c", "ºc", "celsius", "centigrade", "degree c", "degrees c", "degree celsius", "degrees celsius"])
@@ -201,6 +285,7 @@ private enum UnitDimension: Equatable {
     case mass
     case temperature
     case data
+    case duration
 }
 
 private struct UnitDefinition {

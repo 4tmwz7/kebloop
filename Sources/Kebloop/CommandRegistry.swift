@@ -4,10 +4,25 @@ import Combine
 
 // Raw values are persisted identifiers; keep them stable across releases.
 enum LauncherCommand: String, CaseIterable, Identifiable {
+    case lock, sleep, restart, logOut, toggleMute, toggleAppearance, leftHalf, rightHalf, maximizeWindow, centerWindow, restoreWindow, nextDisplay, calculationHistory
     case snippets, scripts, extensions, clipboard, quicklinks, emoji, settings, shutdown, browse, help, onboarding, profiles, webSearch, appleShortcuts
     var id: String { rawValue }
     var title: String {
         switch self {
+        case .lock: L("Lock Screen")
+        case .sleep: L("Sleep")
+        case .restart: L("Restart…")
+        case .logOut: L("Log Out…")
+        case .toggleMute: L("Toggle Mute")
+        case .toggleAppearance: L("Toggle Appearance")
+        case .leftHalf: L("Left Half")
+        case .rightHalf: L("Right Half")
+        case .maximizeWindow: L("Maximize Window")
+        case .centerWindow: L("Center Window")
+        case .restoreWindow: L("Restore Window")
+        case .nextDisplay: L("Move to Next Display")
+        case .calculationHistory: L("Calculator History")
+
         case .snippets: L("Snippets")
         case .scripts: L("Script Commands")
         case .extensions: L("Extensions")
@@ -26,6 +41,20 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
     }
     var symbol: String {
         switch self {
+        case .lock: "lock"
+        case .sleep: "moon.zzz"
+        case .restart: "restart"
+        case .logOut: "rectangle.portrait.and.arrow.right"
+        case .toggleMute: "speaker.slash"
+        case .toggleAppearance: "circle.lefthalf.filled"
+        case .leftHalf: "rectangle.lefthalf.filled"
+        case .rightHalf: "rectangle.righthalf.filled"
+        case .maximizeWindow: "arrow.up.left.and.arrow.down.right"
+        case .centerWindow: "rectangle.center.inset.filled"
+        case .restoreWindow: "arrow.uturn.backward"
+        case .nextDisplay: "display.2"
+        case .calculationHistory: "clock.arrow.circlepath"
+
         case .snippets: "text.quote"
         case .scripts: "terminal"
         case .extensions: "puzzlepiece.extension"
@@ -44,6 +73,20 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
     }
     var aliases: [String] {
         switch self {
+        case .lock: ["lock screen", "lock", "zablokuj"]
+        case .sleep: ["sleep", "uśpij"]
+        case .restart: ["restart", "reboot", "uruchom ponownie"]
+        case .logOut: ["log out", "logout", "wyloguj"]
+        case .toggleMute: ["mute", "unmute", "wycisz"]
+        case .toggleAppearance: ["dark mode", "light mode", "appearance", "wygląd"]
+        case .leftHalf: ["left half", "left window", "lewa połowa"]
+        case .rightHalf: ["right half", "right window", "prawa połowa"]
+        case .maximizeWindow: ["maximize", "window maximize", "maksymalizuj"]
+        case .centerWindow: ["center window", "center", "wyśrodkuj"]
+        case .restoreWindow: ["restore window", "restore", "przywróć okno"]
+        case .nextDisplay: ["next display", "move display", "następny ekran"]
+        case .calculationHistory: ["calculator history", "calculation history", "historia obliczeń"]
+
         case .snippets: ["snippets", "text", "fragmenty", "tekst"]
         case .scripts: ["scripts", "script commands", "skrypty"]
         case .extensions: ["extensions", "rozszerzenia"]
@@ -60,6 +103,29 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .appleShortcuts: ["skróty", "automatyzacja", "apple shortcuts", "shortcuts", "automation"]
         }
     }
+    var systemAction: SystemActionService.Action? {
+        switch self {
+        case .lock: .lock
+        case .sleep: .sleep
+        case .restart: .restart
+        case .logOut: .logOut
+        case .toggleMute: .toggleMute
+        case .toggleAppearance: .toggleAppearance
+        default: nil
+        }
+    }
+    var windowAction: WindowManagementService.Action? {
+        switch self {
+        case .leftHalf: .leftHalf
+        case .rightHalf: .rightHalf
+        case .maximizeWindow: .maximize
+        case .centerWindow: .center
+        case .restoreWindow: .restore
+        case .nextDisplay: .nextDisplay
+        default: nil
+        }
+    }
+
 }
 
 struct CommandShortcutBinding: Codable, Identifiable {

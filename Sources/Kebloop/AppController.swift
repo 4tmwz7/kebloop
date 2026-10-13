@@ -62,6 +62,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if onboardingNeeded { clipboard.enabled = false }
+        SnippetExpansionService.shared.configure(store: snippets)
         shortcuts = AppShortcutStore(index: index, hotkey: hotkey)
         commandShortcuts = CommandShortcutStore(hotkey: hotkey)
         configuration = ConfigurationStore(reload: { [weak self] in self?.reloadConfiguration() }, validateActivation: { [weak self] in
@@ -173,7 +174,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func showEmoji() {
         launcher.dismiss(restoreFocus: false)
         if emojiPicker == nil {
-            emojiPicker = EmojiPickerController(onCopy: { [weak self] in self?.launcher.restorePreviousFocus() })
+            emojiPicker = EmojiPickerController(onCopy: { [weak self] in self?.launcher.restorePreviousFocus() }, onPaste: { [weak self] in self?.launcher.pasteIntoPreviousApplication() })
         }
         emojiPicker?.show()
     }

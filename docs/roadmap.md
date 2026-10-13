@@ -230,3 +230,54 @@ Native smoke checks verified the new commands in root search, `1 km to m` displa
 ### Feature verification follow-up
 
 The requested feature-by-feature verification adds clipboard Remove Item to ⌘K and passes 153 release tests with zero failures (two timing tests skipped). It also fixes oversized derived plain text suppressing valid clipboard attachments, stale extension state after update/reload, and snippet preview abort being treated as Copy. The real sample script and extension run successfully; the separately enabled performance profile passes. See the [full feature matrix and native coverage limits](feature-verification.md).
+
+## Next everyday workflow release
+
+The six priorities below are implemented (2026-10-13). The release suite executes 177 tests: 175 pass and two timing tests are skipped, with zero failures. Automated coverage and native acceptance are recorded separately; a passing unit test does not establish focus, permissions, or display behavior on every Mac.
+
+| Priority | Scope | Acceptance |
+| --- | --- | --- |
+| Direct paste | Paste clipboard formats and emoji into the previous app; explicit Copy and plain-text paste | Missing permission, secure input, a changed clipboard, or changed foreground app keeps the copy available and prevents insertion into the wrong app |
+| App controls | Running indicators, hide, quit, force quit, restart, focus/hide app hotkeys | Actions apply only to running apps; force quit is confirmed; restart waits for normal termination and preserves unsaved-work prompts |
+| System actions | Lock, sleep, restart, log out, mute, and system appearance | Restart/logout use macOS confirmation; unavailable permissions and failed actions produce feedback |
+| Basic window management | Left/right half, maximize, center, restore, next display | Uses visible display bounds; rejects unsupported windows; restores the saved frame; requires Accessibility only when used |
+| Calculator improvements | Cached currency rates, named time zones, durations, mixed-unit arithmetic, accepted calculation history | Typing never waits for network; cached rates work offline with their date shown; history contains accepted results only and can be cleared |
+| Better snippets | Date/time/clipboard variables, default values, optional typing expansion | Old snippets still decode; expansion is off by default, local, and suspended in secure input; unresolved values never delete a trigger |
+
+## Larger feature backlog
+
+These are planned candidates, not part of the everyday workflow release. Prioritize from actual use and preserve the native launcher's responsiveness.
+
+### Window and menu search
+
+Search the previous app's menu commands and all open window titles. Bring a selected window forward, including windows from apps with multiple documents. Handle unavailable Accessibility access and windows disappearing between search and activation.
+
+### Calendar and meetings
+
+Use EventKit to read selected local calendars after explicit opt-in. Show the next meeting and a Join Next Meeting command, recognizing meeting links in event URL/location/notes. Skip declined, canceled, all-day, and finished events. Calendar creation, automatic joining, and camera previews are later additions.
+
+### Selected-text actions
+
+Add grammar correction, rewriting, translation, and summarization for text selected in another app. Preview edits before replacing; retain a copy fallback. Keep selected text separate from instructions, preserve the existing clipboard when reading selections, and exclude secure fields. Choose provider/local processing explicitly.
+
+### Floating Markdown notes
+
+Capture, search, and edit local Markdown notes in a floating window. Define file storage, autosave, recovery, and export before adding formatting or integrations.
+
+### Dictionary and dictation
+
+Look up words through available macOS dictionaries. Separately evaluate on-device dictation into the previous app, with explicit microphone consent and a clear recording indicator.
+
+### Raycast migration
+
+Import supported parts of a Raycast export with a preview, validation, conflicts, and selective categories. Never enable imported executable code or typing monitors automatically. Preserve Kebloop's own configuration round trips.
+
+### Raycast extension compatibility
+
+Investigate compatibility independently from the existing subprocess extension API. Start with a documented subset and real useful extensions; assess runtime, rendering, credentials, distribution, and memory costs before choosing an implementation. A marketplace and unattended installation remain separate decisions.
+
+### Saved window layouts
+
+Build on basic window management to save arrangements across displays and restore multiple app windows with one command. Define matching for missing apps/windows, display changes, and partial failures before adding automatic workspace switching.
+
+Signed/notarized distribution and built-in updates remain tracked in chunks 18–19 above. Finish the pending native accessibility, physical global-hotkey, multi-display, and supported-macOS checks before claiming release readiness.

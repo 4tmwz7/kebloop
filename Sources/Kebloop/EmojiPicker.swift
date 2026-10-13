@@ -60,6 +60,7 @@ private final class EmojiPickerModel: ObservableObject {
 private struct EmojiPickerView: View {
     @ObservedObject var model: EmojiPickerModel
     let choose: (EmojiEntry) -> Void
+    let copyOnly: (EmojiEntry) -> Void
     let close: () -> Void
     @FocusState private var searchFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -107,6 +108,14 @@ private struct EmojiPickerView: View {
             .padding(.horizontal, 16)
             .frame(height: 52)
 
+            HStack {
+                Text(L("Return pastes · Command-Return copies"))
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button(L("Copy")) {
+                    if let entry = model.selectedEntry { copyOnly(entry) }
+                }.disabled(model.selectedEntry == nil)
+            }.padding(.horizontal, 16).padding(.bottom, 8)
             Divider().opacity(0.55)
 
             ScrollView(.horizontal, showsIndicators: false) {
@@ -204,9 +213,9 @@ private struct EmojiPickerView: View {
         .buttonStyle(.plain)
         .help("\(entry.name) — \(entry.symbol)")
         .accessibilityLabel("\(entry.name), \(entry.symbol)")
-        .accessibilityValue(isSelected ? "Selected for copying" : "")
+        .accessibilityValue(isSelected ? "Selected for pasting" : "")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .accessibilityHint(L("Press Return or click to copy this emoji."))
+        .accessibilityHint(L("Press Return or click to paste this emoji. Command-Return copies."))
     }
 }
 
@@ -216,11 +225,13 @@ public final class EmojiPickerController: NSWindowController, NSWindowDelegate {
     private let pickerModel = EmojiPickerModel()
     private let onCopy: (() -> Void)?
     private let onDismiss: (() -> Void)?
+    private let onPaste: (() -> Void)?
     private var keyboardMonitor: Any?
     private var outsideMonitor: Any?
 
-    public init(onCopy: (() -> Void)? = nil, onDismiss: (() -> Void)? = nil) {
+    public init(onCopy: (() -> Void)? = nil, onDismiss: (() -> Void)? = nil, onPaste: (() -> Void)? = nil) {
         self.onCopy = onCopy
+        self.onPaste = onPaste
         self.onDismiss = onDismiss ?? onCopy
         let panel = EmojiPickerPanel(
             contentRect: NSRect(x: 0, y: 0, width: 468, height: 492),
@@ -243,6 +254,8 @@ public final class EmojiPickerController: NSWindowController, NSWindowDelegate {
 
         keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.window?.isKeyWindow == true else { return event }
+            if (self.window?.firstResponder as? NSTextView)?.hasMarkedText() == true { return event }
+            if event.modifierFlags.contains([.control, .option]) { return event }
             switch event.keyCode {
             case 53:
                 self.dismiss()
@@ -264,7 +277,7 @@ public final class EmojiPickerController: NSWindowController, NSWindowDelegate {
                 self.pickerModel.moveSelection(by: -1)
                 return nil
             case 36, 76:
-                if let entry = self.pickerModel.selectedEntry { self.copy(entry) }
+                if let entry = self.pickerModel.selectedEntry { self.copy(entry, paste: !event.modifierFlags.contains(.command)) }
                 return nil
             default:
                 return event
@@ -306,18 +319,18 @@ public final class EmojiPickerController: NSWindowController, NSWindowDelegate {
         dismiss()
     }
 
-    private func copy(_ entry: EmojiEntry) {
+    private func copy(_ entry: EmojiEntry, paste: Bool = true) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(entry.symbol, forType: .string)
         pickerModel.select(entry)
         if let window, window.isVisible { window.orderOut(nil) }
-        onCopy?()
+        if paste, let onPaste { onPaste() } else { onCopy?() }
     }
 
     private func installView(in panel: NSPanel) {
         let hosting = NSHostingView(rootView: EmojiPickerView(model: pickerModel, choose: { [weak self] entry in
             self?.copy(entry)
-        }, close: { [weak self] in self?.dismiss() }))
+        }, copyOnly: { [weak self] entry in self?.copy(entry, paste: false) }, close: { [weak self] in self?.dismiss() }))
         hosting.translatesAutoresizingMaskIntoConstraints = false
         if #available(macOS 26.0, *) {
             let glass = NSGlassEffectView()
