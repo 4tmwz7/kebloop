@@ -85,6 +85,8 @@ refresh_caches() {
 if [ "$action" = uninstall ]; then
     rm -f "$bin_file" "$icon_file" "$desktop_file" "$meta_file"
     rm -rf "$share_dir/kebloop/icons"
+    rm -rf "$share_dir/kebloop/integrations/gnome-shell"
+    rmdir "$share_dir/kebloop/integrations" 2>/dev/null || true
     rmdir "$share_dir/kebloop" 2>/dev/null || true
     refresh_caches
     echo "Removed Kebloop from $DESTDIR$PREFIX"
@@ -110,6 +112,13 @@ chmod 0644 "$icon_file"
 for svg in "$data_dir"/icons/hicolor/symbolic/apps/*.svg; do
     install -m 0644 "$svg" "$symbolic_dir/"
 done
+
+# Ship the optional GNOME extension without enabling it in the user's session.
+gnome_dir=$share_dir/kebloop/integrations/gnome-shell/kebloop@kebloop.app
+install -d "$gnome_dir"
+install -m 0644 "$linux_dir/integrations/gnome-shell/kebloop@kebloop.app/extension.js" "$gnome_dir/"
+install -m 0644 "$linux_dir/integrations/gnome-shell/kebloop@kebloop.app/metadata.json" "$gnome_dir/"
+install -m 0644 "$linux_dir/integrations/gnome-shell/README.md" "$share_dir/kebloop/integrations/gnome-shell/"
 
 refresh_caches
 

@@ -1,18 +1,16 @@
 //! Snippets: list, editor with placeholder hints and the expansion keyword. Keyword expansion
-//! itself (typing the keyword and a space) cannot work on Linux; the switch says so.
+//! uses opt-in accessibility text events in supported applications.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use adw::prelude::*;
-use kebloop_services::snippets::{
-    KEYWORD_EXPANSION_AVAILABLE, Snippet, remove_snippet, save_snippet_with_keyword,
-};
+use kebloop_services::snippets::{Snippet, remove_snippet, save_snippet_with_keyword};
 
 use super::logic::PageId;
 use super::widgets::{
-    DynGroup, Env, Page, action_row, error_label, group, icon_button, mono_label, note,
-    placeholder_row, preferences_page, set_error, text_editor, text_of,
+    DynGroup, Env, Page, SwitchControl, action_row, error_label, group, icon_button, mono_label,
+    note, placeholder_row, preferences_page, set_error, text_editor, text_of,
 };
 use crate::i18n::{tr, trf};
 use kebloop_services::l10n::FormatArg;
@@ -23,18 +21,29 @@ pub fn build(env: &Rc<Env>) -> Page {
     page.set_title(&PageId::Snippets.title());
     page.set_description(&PageId::Snippets.subtitle());
 
-    // Keyword expansion needs a global keyboard hook; the switch stays off and says why.
-    let expansion = adw::SwitchRow::builder()
-        .title(tr("Expand snippet keywords while typing"))
-        .subtitle(gtk::glib::markup_escape_text(&tr(
-            "Not available on Linux: expansion needs a global keyboard hook, which Wayland desktops do not allow. Keywords are kept in your configuration for macOS; use the Snippets command instead.",
-        )))
-        .subtitle_lines(0)
-        .active(KEYWORD_EXPANSION_AVAILABLE)
-        .sensitive(KEYWORD_EXPANSION_AVAILABLE)
-        .build();
+    let expansion = Rc::new(SwitchControl::new(
+        env,
+        &tr("Expand snippet keywords while typing"),
+        &tr(
+            "Uses accessibility APIs in focused editable text fields. Password fields are skipped. Applications without accessible editable text need the Snippets command.",
+        ),
+        crate::services::snippets::enabled(&env.ctx),
+        {
+            let ctx = env.ctx.clone();
+            move |on| {
+                ctx.config
+                    .borrow_mut()
+                    .set_snippet_expansion_enabled(on)
+                    .map_err(|e| e.to_string())?;
+                ctx.emit(crate::context::Change::Settings);
+                Ok(())
+            }
+        },
+    ));
+    let expansion_status = note("");
     let settings = group("", "");
-    settings.add(&expansion);
+    settings.add(&expansion.row);
+    settings.add(&expansion_status);
     page.add(&settings);
 
     let list = Rc::new(DynGroup::new(group(&tr("Snippets"), "")));
@@ -152,6 +161,8 @@ pub fn build(env: &Rc<Env>) -> Page {
         let env = env.clone();
         move || {
             let ctx = &env.ctx;
+            expansion.sync(crate::services::snippets::enabled(ctx));
+            expansion_status.set_text(&ctx.snippet_expansion_status.borrow());
             let snippets = ctx.with_settings(|s| s.snippets.clone());
             let signature = snippets
                 .iter()

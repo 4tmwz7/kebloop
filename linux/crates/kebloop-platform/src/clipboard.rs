@@ -19,8 +19,10 @@
 //!   Wayland thread (commands such as `set_clipboard` are never starved).
 //! * Mime types are reported in their canonical spelling
 //!   ([`kebloop_services::clipboard::canonical_mime`]).
-//! * X11 is not supported (see [`ClipboardBackend::Unavailable`]); the library
-//!   reports a clear reason instead.
+//! * X11 uses XFixes to observe selection ownership and supports bounded INCR transfers.
+
+mod gnome;
+mod x11;
 
 use std::collections::BTreeMap;
 use std::io;
@@ -75,6 +77,8 @@ fn loose(mime: &str) -> String {
 /// Which clipboard protocol is usable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClipboardBackend {
+    Gnome,
+    X11,
     ExtDataControl,
     WlrDataControl,
     /// No supported protocol; the string explains why (shown in the UI).
@@ -93,9 +97,7 @@ pub fn detect_backend() -> ClipboardBackend {
         || std::env::var_os("WAYLAND_SOCKET").is_some();
     if !wayland {
         return if std::env::var_os("DISPLAY").is_some_and(|v| !v.is_empty()) {
-            ClipboardBackend::Unavailable(
-                "X11 session: clipboard history via XFixes is not implemented in this build".into(),
-            )
+            x11::probe()
         } else {
             ClipboardBackend::Unavailable("no Wayland or X11 display found".into())
         };
@@ -105,7 +107,17 @@ pub fn detect_backend() -> ClipboardBackend {
         Err(e) => return ClipboardBackend::Unavailable(format!("cannot connect to Wayland: {e}")),
     };
     match registry_queue_init::<State>(&conn) {
-        Ok((globals, _queue)) => backend_from_globals(&globals),
+        Ok((globals, _queue)) => {
+            let backend = backend_from_globals(&globals);
+            if matches!(backend, ClipboardBackend::Unavailable(_))
+                && std::env::var("XDG_CURRENT_DESKTOP")
+                    .is_ok_and(|v| v.split(':').any(|d| d.eq_ignore_ascii_case("GNOME")))
+            {
+                gnome::probe()
+            } else {
+                backend
+            }
+        }
         Err(e) => ClipboardBackend::Unavailable(format!("cannot enumerate Wayland globals: {e}")),
     }
 }
@@ -179,6 +191,8 @@ impl Default for ClipboardConfig {
 /// A clipboard change.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ClipboardEvent {
+    /// Source application identity when the display server exposes it.
+    pub source_app: Option<String>,
     /// Every mime type the source offered (including markers), as offered.
     pub mimes: Vec<String>,
     /// Data of the preferred types that were read, keyed by the canonical mime
@@ -732,6 +746,7 @@ fn prepare_job(
             data,
             sensitive,
             own_write: true,
+            source_app: None,
             skipped: Vec::new(),
         });
     }
@@ -907,6 +922,12 @@ fn pick_manager(
             .bind::<wlr_impl::Manager, _, _>(qh, 1..=2, ())
             .map(Manager::Wlr)
             .map_err(|e| ClipboardError::Wayland(e.to_string())),
+        ClipboardBackend::Gnome => Err(ClipboardError::Unavailable(
+            "GNOME is not a Wayland data-control protocol".into(),
+        )),
+        ClipboardBackend::X11 => Err(ClipboardError::Unavailable(
+            "X11 is not a Wayland protocol".into(),
+        )),
         ClipboardBackend::Unavailable(reason) => Err(ClipboardError::Unavailable(reason)),
     }
 }
@@ -1055,6 +1076,12 @@ impl ClipboardWatcher {
         config: ClipboardConfig,
     ) -> Result<(Self, async_channel::Receiver<ClipboardEvent>), ClipboardError> {
         let backend = detect_backend();
+        if backend == ClipboardBackend::Gnome {
+            return gnome::start(config);
+        }
+        if backend == ClipboardBackend::X11 {
+            return x11::start(config);
+        }
         if let ClipboardBackend::Unavailable(reason) = backend {
             return Err(ClipboardError::Unavailable(reason));
         }

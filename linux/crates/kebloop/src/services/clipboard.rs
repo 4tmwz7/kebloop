@@ -140,10 +140,28 @@ fn record(ctx: &AppContext, event: ClipboardEvent) {
     if event.sensitive {
         return;
     }
-    let outcome = ctx
-        .clipboard
-        .borrow_mut()
-        .record(&event.data, None, SystemTime::now());
+    let source = event.source_app.as_deref().map(|source| {
+        let apps = ctx.apps.borrow();
+        let mut matches = apps
+            .iter()
+            .filter(|app| crate::platform::identity_of(app).matches_app_id(source));
+        match (matches.next(), matches.next()) {
+            (Some(app), None) => app.id.clone(),
+            _ => source.to_owned(),
+        }
+    });
+    // Accept both raw owner identities and their unambiguous desktop-file ids.
+    if event
+        .source_app
+        .as_ref()
+        .is_some_and(|source| ctx.clipboard.borrow().excluded_sources().contains(source))
+    {
+        return;
+    }
+    let outcome =
+        ctx.clipboard
+            .borrow_mut()
+            .record(&event.data, source.as_deref(), SystemTime::now());
     match outcome {
         Ok(RecordOutcome::Recorded(_)) => ctx.emit(Change::Clipboard),
         Ok(RecordOutcome::Ignored(_)) => {}

@@ -13,6 +13,12 @@ pub const TOP_MARGIN_FRACTION: f64 = 0.20;
 /// Layer-shell namespace (matched by compositor layer rules for blur).
 pub const NAMESPACE: &str = "kebloop";
 
+/// The layer-shell library must not be queried with an X11 display.
+pub(crate) fn layer_shell_supported() -> bool {
+    gdk::Display::default().is_some_and(|display| display.type_().name() == "GdkWaylandDisplay")
+        && gtk4_layer_shell::is_supported()
+}
+
 /// Top margin for an output of `output_height` logical pixels, never negative.
 pub fn top_margin(output_height: i32) -> i32 {
     (f64::from(output_height.max(0)) * TOP_MARGIN_FRACTION).round() as i32
@@ -74,7 +80,7 @@ impl PanelWindow {
             .css_classes(["kb-window"])
             .title("Kebloop")
             .build();
-        let layer_shell = gtk4_layer_shell::is_supported();
+        let layer_shell = layer_shell_supported();
         let margin = Rc::new(Cell::new(0));
         if layer_shell {
             window.init_layer_shell();

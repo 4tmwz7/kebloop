@@ -106,6 +106,11 @@ impl AppIdentity {
         let Some(app_id) = window.app_id.as_deref() else {
             return false;
         };
+        self.matches_app_id(app_id)
+    }
+
+    /// Resolve a display-server application identity without inventing a window.
+    pub fn matches_app_id(&self, app_id: &str) -> bool {
         let app_id = app_id.to_lowercase();
         if app_id.is_empty() {
             return false;

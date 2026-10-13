@@ -122,7 +122,7 @@ pub fn build(env: &Rc<Env>) -> Page {
     // Placement: only meaningful with layer-shell, where the compositor otherwise picks the
     // focused output.
     let placement = group(&tr("Panel placement"), "");
-    let layer_shell = gtk4_layer_shell::is_supported();
+    let layer_shell = crate::launcher::layer_shell_supported();
     let displays = Rc::new(std::cell::RefCell::new(connectors()));
     let mode = {
         let ctx = ctx.clone();

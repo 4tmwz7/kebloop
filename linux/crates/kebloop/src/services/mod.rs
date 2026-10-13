@@ -6,6 +6,7 @@ pub mod clipboard;
 pub mod files;
 pub mod rates;
 pub mod shortcuts;
+pub mod snippets;
 pub mod system;
 pub mod tray;
 
@@ -44,6 +45,7 @@ pub fn start(ctx: &Rc<AppContext>, file_events: async_channel::Receiver<FileInde
     probe_power_off(ctx);
     probe_system_actions(ctx);
     rates::init(ctx);
+    snippets::init(ctx);
     let probing = ctx.clone();
     glib::timeout_add_seconds_local(10 * 60, move || {
         probe_power_off(&probing);

@@ -12,6 +12,7 @@ pub mod model;
 pub mod results;
 pub mod views;
 mod window;
+pub(crate) use window::layer_shell_supported;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;

@@ -15,6 +15,7 @@ pub mod paths;
 pub mod power;
 pub mod session;
 pub mod shortcuts;
+pub mod snippet_expansion;
 pub mod system_actions;
 pub mod text;
 pub mod tray;

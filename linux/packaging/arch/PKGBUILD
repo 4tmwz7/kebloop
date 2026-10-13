@@ -9,7 +9,8 @@ license=('MIT' 'CC-BY-SA-3.0')
 depends=('gtk4' 'libadwaita' 'gtk4-layer-shell' 'glibc' 'gcc-libs')
 makedepends=('cargo' 'git')
 optdepends=('wtype: paste snippets on wlroots compositors'
-            'ydotool: paste snippets on other compositors')
+            'ydotool: paste snippets on other compositors'
+            'at-spi2-core: automatic snippet expansion in accessible text fields')
 provides=('kebloop')
 conflicts=('kebloop')
 options=('!lto')

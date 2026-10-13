@@ -137,6 +137,8 @@ pub struct AppContext {
     pub clipboard_revision: Arc<AtomicU64>,
     /// `wtype`/`ydotool`, when installed.
     pub paste_tool: Option<PasteTool>,
+    /// Status of the opt-in accessibility snippet service, shown in Settings.
+    pub snippet_expansion_status: RefCell<String>,
     /// Display server and compositor.
     pub session: SessionInfo,
     /// Global-shortcut portal registration state.
@@ -223,6 +225,7 @@ impl AppContext {
             rate_requests: RefCell::new(None),
             clipboard_revision: Arc::new(AtomicU64::new(0)),
             paste_tool: kebloop_platform::paste::detect_paste_tool_in_path(),
+            snippet_expansion_status: RefCell::new(String::new()),
             session: SessionInfo::detect(),
             portal: RefCell::new(PortalState::Checking),
             styling,

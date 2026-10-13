@@ -122,7 +122,12 @@ const NIRI_FLOATING: &str = "needs a floating window on niri";
 pub fn support(kind: CompositorKind, action: WindowAction) -> ActionSupport {
     use WindowAction as A;
     match kind {
-        CompositorKind::Hyprland | CompositorKind::Sway | CompositorKind::I3 => ActionSupport::Full,
+        CompositorKind::Hyprland
+        | CompositorKind::Sway
+        | CompositorKind::I3
+        | CompositorKind::X11
+        | CompositorKind::KWin
+        | CompositorKind::Gnome => ActionSupport::Full,
         CompositorKind::Niri => match action {
             A::TopHalf
             | A::BottomHalf

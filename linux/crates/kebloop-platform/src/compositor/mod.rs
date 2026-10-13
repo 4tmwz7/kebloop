@@ -1,18 +1,24 @@
 //! Compositor IPC (no GTK): list/focus/close/hide windows and run layout
-//! commands on niri, Hyprland, Sway and i3.
+//! commands on niri, Hyprland, Sway, i3, GNOME and EWMH X11 desktops.
 //!
-//! Every backend talks to its socket with `std` only and is constructed from an
-//! explicit socket path, so tests drive it against fake servers in temp dirs.
+//! Native compositor backends use their IPC sockets; GNOME uses the bundled
+//! Shell extension and X11 uses EWMH through x11rb.
 //! [`connect`] picks the backend from the environment ([`Env`]).
 
+pub(crate) mod gnome;
 mod hyprland;
 pub(crate) mod ipc;
+mod kwin;
 mod niri;
 mod sway;
+mod x11;
 
+pub use gnome::Gnome;
 pub use hyprland::Hyprland;
+pub use kwin::KWin;
 pub use niri::Niri;
 pub use sway::Sway;
+pub use x11::X11;
 
 use std::fmt;
 use std::path::PathBuf;
@@ -31,6 +37,9 @@ pub enum CompositorKind {
     Hyprland,
     Sway,
     I3,
+    X11,
+    Gnome,
+    KWin,
 }
 
 impl CompositorKind {
@@ -40,6 +49,9 @@ impl CompositorKind {
             Self::Hyprland => "Hyprland",
             Self::Sway => "Sway",
             Self::I3 => "i3",
+            Self::X11 => "X11",
+            Self::Gnome => "GNOME",
+            Self::KWin => "KWin",
         }
     }
 }
@@ -275,6 +287,23 @@ pub fn detect_kind(env: &Env) -> Option<CompositorKind> {
         Some(CompositorKind::Sway)
     } else if env.get("I3SOCK").is_some() {
         Some(CompositorKind::I3)
+    } else if env.get("DISPLAY").is_some()
+        && env.get("WAYLAND_DISPLAY").is_none()
+        && env.get("XDG_SESSION_TYPE") != Some("wayland")
+    {
+        Some(CompositorKind::X11)
+    } else if env.get("XDG_CURRENT_DESKTOP").is_some_and(|value| {
+        value
+            .split(':')
+            .any(|part| part.eq_ignore_ascii_case("GNOME"))
+    }) {
+        Some(CompositorKind::Gnome)
+    } else if env.get("XDG_CURRENT_DESKTOP").is_some_and(|value| {
+        value
+            .split(':')
+            .any(|part| part.eq_ignore_ascii_case("KDE"))
+    }) {
+        Some(CompositorKind::KWin)
     } else {
         None
     }
@@ -298,11 +327,16 @@ pub fn hyprland_socket_path(env: &Env) -> Option<PathBuf> {
 pub fn connect(env: &Env) -> Result<Box<dyn Compositor>, CompositorError> {
     let kind = detect_kind(env).ok_or_else(|| {
         CompositorError::Unavailable(
-            "none of NIRI_SOCKET, HYPRLAND_INSTANCE_SIGNATURE, SWAYSOCK, I3SOCK is set".into(),
+            "no supported compositor socket, GNOME desktop, or native X11 display".into(),
         )
     })?;
     let unset = |name: &str| CompositorError::Unavailable(format!("{name} is not usable"));
     Ok(match kind {
+        CompositorKind::KWin => Box::new(KWin::new()?),
+        CompositorKind::Gnome => Box::new(Gnome::new()?),
+        CompositorKind::X11 => Box::new(X11::new(
+            env.get("DISPLAY").ok_or_else(|| unset("DISPLAY"))?,
+        )?),
         CompositorKind::Niri => Box::new(Niri::new(
             env.get("NIRI_SOCKET")
                 .map(PathBuf::from)
@@ -329,6 +363,9 @@ pub fn connect(env: &Env) -> Result<Box<dyn Compositor>, CompositorError> {
 /// Capabilities without opening a socket (for settings screens).
 pub fn capabilities_for(kind: CompositorKind) -> CompositorCapabilities {
     match kind {
+        CompositorKind::KWin => kwin::CAPABILITIES,
+        CompositorKind::Gnome => gnome::CAPABILITIES,
+        CompositorKind::X11 => x11::CAPABILITIES,
         CompositorKind::Niri => niri::CAPABILITIES,
         CompositorKind::Hyprland => hyprland::CAPABILITIES,
         CompositorKind::Sway | CompositorKind::I3 => sway::CAPABILITIES,
@@ -394,6 +431,28 @@ mod tests {
             connect(&env),
             Err(CompositorError::Unavailable(_))
         ));
+    }
+
+    #[test]
+    fn x11_does_not_mistake_xwayland_for_native_x11() {
+        assert_eq!(
+            detect_kind(&Env::from_pairs([("DISPLAY", ":0")])),
+            Some(CompositorKind::X11)
+        );
+        assert_eq!(
+            detect_kind(&Env::from_pairs([
+                ("DISPLAY", ":0"),
+                ("WAYLAND_DISPLAY", "wayland-0")
+            ])),
+            None
+        );
+        assert_eq!(
+            detect_kind(&Env::from_pairs([
+                ("DISPLAY", ":0"),
+                ("XDG_SESSION_TYPE", "wayland")
+            ])),
+            None
+        );
     }
 
     #[test]

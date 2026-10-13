@@ -40,6 +40,30 @@ fn open(dir: &Path) -> ConfigStore {
     ConfigStore::open(paths(dir), HOME).unwrap()
 }
 
+#[test]
+fn snippet_expansion_consent_is_local_and_cannot_be_enabled_by_import() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = open(dir.path());
+    assert!(!store.global().snippet_keyword_expansion_enabled);
+    store.set_snippet_expansion_enabled(true).unwrap();
+    assert!(open(dir.path()).global().snippet_keyword_expansion_enabled);
+    let mut exported: serde_json::Value =
+        serde_json::from_slice(&store.export_data(None).unwrap()).unwrap();
+    assert!(
+        !exported
+            .to_string()
+            .contains("snippetKeywordExpansionEnabled")
+    );
+    store.set_snippet_expansion_enabled(false).unwrap();
+    exported["settings"]["snippetKeywordExpansionEnabled"] = json!(true);
+    let preview = store
+        .preview(&serde_json::to_vec(&exported).unwrap())
+        .unwrap();
+    store.apply(&preview, ImportMode::Merge, None).unwrap();
+    assert!(!store.global().snippet_keyword_expansion_enabled);
+    assert!(!open(dir.path()).global().snippet_keyword_expansion_enabled);
+}
+
 fn set_alias(store: &mut ConfigStore, key: &str, alias: &str) {
     store
         .update(|s| aliases::save_alias(&mut s.aliases, key, alias))

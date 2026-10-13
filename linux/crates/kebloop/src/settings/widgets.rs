@@ -87,10 +87,10 @@ pub fn preferences_page() -> adw::PreferencesPage {
 pub fn group(title: &str, description: &str) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::new();
     if !title.is_empty() {
-        group.set_title(title);
+        group.set_title(&glib::markup_escape_text(title));
     }
     if !description.is_empty() {
-        group.set_description(Some(description));
+        group.set_description(Some(&glib::markup_escape_text(description)));
     }
     group
 }

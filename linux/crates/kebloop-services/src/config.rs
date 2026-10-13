@@ -434,6 +434,9 @@ pub struct GlobalSettings {
     /// The first-run walkthrough was completed or skipped.
     #[serde(default)]
     pub onboarding_dismissed: bool,
+    /// Explicit local consent for accessibility-based snippet expansion; never exported.
+    #[serde(default)]
+    pub snippet_keyword_expansion_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -745,6 +748,11 @@ impl ConfigStore {
     /// Choose the AI handoff provider.
     pub fn set_ai_provider(&mut self, provider: AiProvider) -> Result<(), ConfigError> {
         self.update_global(|g| g.ai_provider = provider)
+    }
+
+    /// Enable accessibility snippet expansion on this machine, independently of profiles.
+    pub fn set_snippet_expansion_enabled(&mut self, enabled: bool) -> Result<(), ConfigError> {
+        self.update_global(|g| g.snippet_keyword_expansion_enabled = enabled)
     }
 
     fn update_usage(

@@ -298,3 +298,14 @@
 "Paste these lines into your compositor configuration to bind the window shortcuts. Unassigned commands use the suggested shortcut." = "Paste these lines into your compositor configuration to bind the window shortcuts. Unassigned commands use the suggested shortcut.";
 "Restore returns to the frame saved before the first arrangement. Full-screen and hidden windows cannot be arranged. Display actions require more than one display." = "Restore returns to the frame saved before the first arrangement. Full-screen and hidden windows cannot be arranged. Display actions require more than one display.";
 "Uses Ctrl+Alt with arrow keys for halves, U/I/J/K for quarters, D/F/G for thirds, E/T for two thirds, Return to maximize, C to center, and Backspace to restore. Add Shift to Left/Right for displays. Existing shortcuts are kept; conflicts are skipped." = "Uses Ctrl+Alt with arrow keys for halves, U/I/J/K for quarters, D/F/G for thirds, E/T for two thirds, Return to maximize, C to center, and Backspace to restore. Add Shift to Left/Right for displays. Existing shortcuts are kept; conflicts are skipped.";
+
+"Source exclusions use X11 clipboard-owner identities. Native Wayland offers no reliable source identity, so exclusions cannot be applied there." = "Source exclusions use X11 clipboard-owner identities. Native Wayland offers no reliable source identity, so exclusions cannot be applied there.";
+"Excluded source applications (comma-separated IDs)" = "Excluded source applications (comma-separated IDs)";
+"Uses accessibility APIs in focused editable text fields. Password fields are skipped. Applications without accessible editable text need the Snippets command." = "Uses accessibility APIs in focused editable text fields. Password fields are skipped. Applications without accessible editable text need the Snippets command.";
+"Snippet expansion is turned off." = "Snippet expansion is turned off.";
+"Snippet changed before expansion." = "Snippet changed before expansion.";
+"Active in accessible text fields" = "Active in accessible text fields";
+"Could not start snippet expansion." = "Could not start snippet expansion.";
+"Accessibility service stopped." = "Accessibility service stopped.";
+"Clipboard is unavailable." = "Clipboard is unavailable.";
+"Clipboard read timed out." = "Clipboard read timed out.";

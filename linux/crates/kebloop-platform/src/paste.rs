@@ -9,6 +9,10 @@ use crate::compositor::{Compositor, CompositorError, Window, WindowId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PasteTool {
+    /// Native X11 input, without an external program.
+    XTest,
+    /// Native virtual keyboard through the optional GNOME extension.
+    Gnome,
     Wtype,
     Ydotool,
 }
@@ -16,6 +20,8 @@ pub enum PasteTool {
 impl PasteTool {
     pub fn program(self) -> &'static str {
         match self {
+            Self::XTest => "XTEST",
+            Self::Gnome => "GNOME extension",
             Self::Wtype => "wtype",
             Self::Ydotool => "ydotool",
         }
@@ -65,12 +71,33 @@ pub fn detect_paste_tool(path_dirs: &[PathBuf]) -> Option<PasteTool> {
 
 /// Same, using the process `PATH`.
 pub fn detect_paste_tool_in_path() -> Option<PasteTool> {
+    let env = crate::paths::Env::from_process();
+    if crate::session::SessionInfo::detect_with(&env).display_server
+        == crate::session::DisplayServer::X11
+        && x11rb::connect(None).is_ok_and(|(conn, _)| {
+            use x11rb::protocol::xtest::ConnectionExt;
+            conn.xtest_get_version(2, 2)
+                .is_ok_and(|cookie| cookie.reply().is_ok())
+        })
+    {
+        return Some(PasteTool::XTest);
+    }
+    if env.get("XDG_CURRENT_DESKTOP").is_some_and(|desktop| {
+        desktop
+            .split(':')
+            .any(|part| part.eq_ignore_ascii_case("GNOME"))
+    }) && crate::compositor::Gnome::new().is_ok()
+    {
+        return Some(PasteTool::Gnome);
+    }
     detect_paste_tool(&crate::paths::Env::from_process().path_dirs())
 }
 
 /// Program and arguments that perform `chord`.
 pub fn paste_command(tool: PasteTool, chord: PasteChord) -> (&'static str, Vec<&'static str>) {
     match (tool, chord) {
+        (PasteTool::XTest, _) => ("XTEST", Vec::new()),
+        (PasteTool::Gnome, _) => ("GNOME extension", Vec::new()),
         (PasteTool::Wtype, PasteChord::CtrlV) => ("wtype", vec!["-M", "ctrl", "v", "-m", "ctrl"]),
         (PasteTool::Wtype, PasteChord::CtrlShiftV) => (
             "wtype",
@@ -92,6 +119,13 @@ pub fn paste_command(tool: PasteTool, chord: PasteChord) -> (&'static str, Vec<&
 /// Sends the paste chord to the focused window. Blocking; call off the UI thread
 /// after the launcher panel released keyboard focus.
 pub fn simulate_paste(tool: PasteTool, chord: PasteChord) -> Result<(), PasteError> {
+    if tool == PasteTool::XTest {
+        return simulate_x11(chord).map_err(|error| PasteError::Failed("XTEST", error));
+    }
+    if tool == PasteTool::Gnome {
+        return crate::compositor::gnome::simulate_paste(chord == PasteChord::CtrlShiftV)
+            .map_err(|error| PasteError::Failed("GNOME extension", error));
+    }
     let (program, args) = paste_command(tool, chord);
     let output = Command::new(program)
         .args(args)
@@ -107,6 +141,94 @@ pub fn simulate_paste(tool: PasteTool, chord: PasteChord) -> Result<(), PasteErr
             String::from_utf8_lossy(&output.stderr).trim().to_owned(),
         ))
     }
+}
+
+fn simulate_x11(chord: PasteChord) -> Result<(), String> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::{xproto::ConnectionExt as _, xtest::ConnectionExt as _};
+
+    let (conn, screen) = x11rb::connect(None).map_err(|e| e.to_string())?;
+    let setup = conn.setup();
+    let count = setup.max_keycode - setup.min_keycode + 1;
+    let mapping = conn
+        .get_keyboard_mapping(setup.min_keycode, count)
+        .map_err(|e| e.to_string())?
+        .reply()
+        .map_err(|e| e.to_string())?;
+    let keycode = |symbol: u32| -> Result<u8, String> {
+        mapping
+            .keysyms
+            .chunks(usize::from(mapping.keysyms_per_keycode))
+            .position(|symbols| symbols.contains(&symbol))
+            .and_then(|index| u8::try_from(index).ok())
+            .and_then(|index| setup.min_keycode.checked_add(index))
+            .ok_or_else(|| format!("keyboard has no keysym {symbol:#x}"))
+    };
+    let control = keycode(0xffe3)?;
+    let shift = keycode(0xffe1)?;
+    let v = keycode(u32::from('v'))?;
+    let held = conn
+        .query_keymap()
+        .map_err(|e| e.to_string())?
+        .reply()
+        .map_err(|e| e.to_string())?
+        .keys;
+    let is_held = |key: u8| held[usize::from(key / 8)] & (1 << (key % 8)) != 0;
+    if is_held(v) {
+        return Err("Paste cancelled because the paste key is still held".into());
+    }
+    let modifiers = conn
+        .get_modifier_mapping()
+        .map_err(|e| e.to_string())?
+        .reply()
+        .map_err(|e| e.to_string())?;
+    if modifiers
+        .keycodes
+        .chunks(usize::from(modifiers.keycodes_per_modifier()).max(1))
+        .enumerate()
+        .any(|(modifier, keys)| {
+            // Preserve held Control and, for terminal paste, Shift. Caps Lock does not
+            // change the shortcut; other held modifiers would change its meaning.
+            modifier != 1
+                && modifier != 2
+                && !(modifier == 0 && chord == PasteChord::CtrlShiftV)
+                && keys.iter().any(|key| *key != 0 && is_held(*key))
+        })
+    {
+        return Err("Paste cancelled because another modifier is still held".into());
+    }
+    let mut pressed = Vec::new();
+    let result = (|| {
+        for key in [
+            Some(control),
+            (chord == PasteChord::CtrlShiftV).then_some(shift),
+            Some(v),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if !is_held(key) {
+                conn.xtest_fake_input(2, key, 0, setup.roots[screen].root, 0, 0, 0)
+                    .map_err(|e| e.to_string())?
+                    .check()
+                    .map_err(|e| e.to_string())?;
+                pressed.push(key);
+            }
+        }
+        Ok(())
+    })();
+    let mut release_error = None;
+    for key in pressed.into_iter().rev() {
+        if let Err(error) = conn
+            .xtest_fake_input(3, key, 0, setup.roots[screen].root, 0, 0, 0)
+            .map_err(|e| e.to_string())
+            .and_then(|cookie| cookie.check().map_err(|e| e.to_string()))
+        {
+            release_error = Some(error);
+        }
+    }
+    conn.flush().map_err(|e| e.to_string())?;
+    result.and_then(|()| release_error.map_or(Ok(()), Err))
 }
 
 /// The window that should receive the paste.
@@ -259,6 +381,67 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
+
+    #[test]
+    #[ignore = "requires a private X11 test display"]
+    fn private_x11_native_paste_chords() {
+        use x11rb::connection::Connection;
+        use x11rb::protocol::{Event, xproto::*};
+        use x11rb::{COPY_DEPTH_FROM_PARENT, CURRENT_TIME};
+        let (conn, screen) = x11rb::connect(None).unwrap();
+        let window = conn.generate_id().unwrap();
+        conn.create_window(
+            COPY_DEPTH_FROM_PARENT,
+            window,
+            conn.setup().roots[screen].root,
+            0,
+            0,
+            100,
+            100,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            0,
+            &CreateWindowAux::new()
+                .override_redirect(1)
+                .event_mask(EventMask::KEY_PRESS | EventMask::KEY_RELEASE),
+        )
+        .unwrap()
+        .check()
+        .unwrap();
+        conn.map_window(window).unwrap().check().unwrap();
+        conn.set_input_focus(InputFocus::PARENT, window, CURRENT_TIME)
+            .unwrap()
+            .check()
+            .unwrap();
+        for chord in [PasteChord::CtrlV, PasteChord::CtrlShiftV] {
+            simulate_paste(PasteTool::XTest, chord).unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(1);
+            let mut presses = Vec::new();
+            while std::time::Instant::now() < deadline {
+                match conn.poll_for_event().unwrap() {
+                    Some(Event::KeyPress(event)) => presses.push(event),
+                    Some(_) => {}
+                    None if presses.len() == if chord == PasteChord::CtrlV { 2 } else { 3 } => {
+                        break;
+                    }
+                    None => std::thread::sleep(Duration::from_millis(5)),
+                }
+            }
+            let paste = presses.last().expect("paste must generate a new keypress");
+            assert!(paste.state.contains(KeyButMask::CONTROL));
+            assert_eq!(
+                paste.state.contains(KeyButMask::SHIFT),
+                chord == PasteChord::CtrlShiftV
+            );
+            let mapping = conn
+                .get_keyboard_mapping(paste.detail, 1)
+                .unwrap()
+                .reply()
+                .unwrap();
+            assert!(mapping.keysyms.contains(&u32::from('v')));
+        }
+        conn.destroy_window(window).unwrap().check().unwrap();
+    }
 
     fn install(dir: &std::path::Path, name: &str) {
         let p = dir.join(name);

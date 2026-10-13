@@ -452,7 +452,7 @@ impl HelpView {
                 let facts = availability(&SessionFacts {
                     clipboard: &ctx.clipboard_status.borrow(),
                     portal: &ctx.portal.borrow(),
-                    layer_shell: gtk4_layer_shell::is_supported(),
+                    layer_shell: crate::launcher::layer_shell_supported(),
                     paste_tool: ctx.paste_tool,
                     direct_paste: settings_direct_paste(&settings, ctx.paste_tool.is_some()),
                     shutdown: offered.shutdown(),

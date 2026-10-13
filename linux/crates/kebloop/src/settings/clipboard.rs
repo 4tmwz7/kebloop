@@ -167,8 +167,27 @@ pub fn build(env: &Rc<Env>) -> Page {
         "Kebloop skips items that mark themselves as passwords or concealed.",
     )));
     privacy.add(&note(&tr(
-        "Excluding source applications is not available on Wayland: the compositor does not tell Kebloop which application copied the text.",
+        "Source exclusions use X11 clipboard-owner identities. Native Wayland offers no reliable source identity, so exclusions cannot be applied there.",
     )));
+    let excluded = adw::EntryRow::builder()
+        .title(tr("Excluded source applications (comma-separated IDs)"))
+        .show_apply_button(true)
+        .build();
+    let last_sources = std::cell::RefCell::new(None::<String>);
+    {
+        let ctx = ctx.clone();
+        excluded.connect_apply(move |row| {
+            let sources = row
+                .text()
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+                .collect();
+            let _ = apply(&ctx, |store| store.set_excluded_sources(sources));
+        });
+    }
+    privacy.add(&excluded);
     page.add(&privacy);
 
     let data = group("", "");
@@ -216,6 +235,18 @@ pub fn build(env: &Rc<Env>) -> Page {
                 )
             };
             enabled.sync(is_enabled);
+            let sources = ctx
+                .clipboard
+                .borrow()
+                .excluded_sources()
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            if last_sources.borrow().as_ref() != Some(&sources) {
+                excluded.set_text(&sources);
+                *last_sources.borrow_mut() = Some(sources);
+            }
             limit.sync(f64::from(u32::try_from(max).unwrap_or(200)));
             retention.sync(f64::from(days));
             resume.set_sensitive(paused);

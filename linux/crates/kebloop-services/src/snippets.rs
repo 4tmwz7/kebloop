@@ -4,12 +4,8 @@
 //! Port of `Sources/Kebloop/SnippetStore.swift` (the model, not the stored list) plus the
 //! platform-neutral part of `SnippetExpansionService.swift`: the keyword matcher.
 //!
-//! A snippet may carry a `keyword` for automatic expansion while typing. Keyword expansion
-//! needs a global keyboard event tap, which Linux does not offer to ordinary applications
-//! (Wayland), so it is **not available** here: [`KEYWORD_EXPANSION_AVAILABLE`] is `false` and the
-//! launcher must neither offer the toggle nor claim that keywords work. The field is kept in
-//! the model so configurations stay compatible with macOS, and the matcher is kept
-//! (and tested) for a future input-method or portal based implementation.
+//! Keywords expand through the optional AT-SPI accessibility service in supported text
+//! fields. This module provides the matcher independently of desktop availability.
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::OnceLock;
@@ -29,11 +25,6 @@ pub const MAX_NAME_LENGTH: usize = 200;
 pub const MAX_TEMPLATE_BYTES: usize = 100_000;
 /// Maximum keyword length in UTF-8 bytes.
 pub const MAX_KEYWORD_BYTES: usize = 64;
-/// Whether typing a snippet keyword followed by a space expands it. Always `false` on Linux.
-pub const KEYWORD_EXPANSION_AVAILABLE: bool = false;
-/// Why [`KEYWORD_EXPANSION_AVAILABLE`] is `false` (English; for tooltips and Help).
-pub const KEYWORD_EXPANSION_UNAVAILABLE_REASON: &str =
-    "Keyword expansion needs a global keyboard hook, which Linux desktops do not allow.";
 
 /// Placeholder names that are filled in locally instead of being prompted for.
 const DYNAMIC_NAMES: [&str; 3] = ["date", "time", "clipboard"];
