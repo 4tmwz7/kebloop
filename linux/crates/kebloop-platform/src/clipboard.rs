@@ -156,6 +156,9 @@ pub struct ClipboardConfig {
     /// change, pause start/expiry). While `false` the watcher reports only the offered mime
     /// types and never requests any data from the source.
     pub recording: Arc<AtomicBool>,
+    /// Incremented immediately for external selection changes, including clears, without
+    /// waiting for content reads. Own writes leave it unchanged.
+    pub revision: Arc<AtomicU64>,
 }
 
 impl Default for ClipboardConfig {
@@ -168,6 +171,7 @@ impl Default for ClipboardConfig {
             total_timeout: Duration::from_secs(5),
             force_wlr: false,
             recording: Arc::new(AtomicBool::new(true)),
+            revision: Arc::new(AtomicU64::new(0)),
         }
     }
 }
@@ -310,12 +314,21 @@ impl Manager {
 struct State {
     selection: Option<Offer>,
     selection_dirty: bool,
+    revision: Option<Arc<AtomicU64>>,
     finished: bool,
     own: Option<OwnSource>,
 }
 
 impl State {
     fn on_selection(&mut self, offer: Option<Offer>) {
+        if let Some(revision) = &self.revision {
+            let mimes = offer.as_ref().map(Offer::mimes).unwrap_or_default();
+            observe_selection(
+                revision,
+                &mimes,
+                self.own.as_ref().map(|own| own.marker.as_str()),
+            );
+        }
         if let Some(old) = std::mem::replace(&mut self.selection, offer) {
             old.destroy();
         }
@@ -328,6 +341,14 @@ impl State {
         {
             own.source.destroy();
         }
+    }
+}
+
+/// Observe metadata on the Wayland thread before any potentially slow payload reads.
+fn observe_selection(revision: &AtomicU64, mimes: &[String], own_marker: Option<&str>) {
+    let own_write = own_marker.is_some_and(|marker| mimes.iter().any(|mime| mime == marker));
+    if !own_write {
+        revision.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -936,6 +957,7 @@ fn run_loop(
     jobs: &mpsc::Sender<Job>,
 ) -> Result<(), ClipboardError> {
     let wayland_err = |e: &dyn std::fmt::Display| ClipboardError::Wayland(e.to_string());
+    rt.state.revision = Some(cfg.revision.clone());
     loop {
         while let Ok(cmd) = commands.try_recv() {
             match cmd {
@@ -1239,6 +1261,40 @@ mod tests {
 
     fn offered(mimes: &[&str]) -> Vec<String> {
         mimes.iter().map(|m| (*m).to_owned()).collect()
+    }
+
+    #[test]
+    fn external_selection_changes_advance_revision_without_payload_reads() {
+        let cfg = ClipboardConfig::default();
+        cfg.recording.store(false, Ordering::Relaxed);
+        let mimes = offered(&["text/plain", CONCEALED_MIME]);
+        observe_selection(&cfg.revision, &mimes, Some("application/x-kebloop-own"));
+        assert_eq!(cfg.revision.load(Ordering::Relaxed), 1);
+        assert!(plan_reads(&mimes, &cfg, false).items.is_empty());
+        // A second change must count even if the previous payload has not finished.
+        observe_selection(&cfg.revision, &offered(&["image/png"]), None);
+        assert_eq!(cfg.revision.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn clearing_selection_advances_revision() {
+        let revision = Arc::new(AtomicU64::new(0));
+        let mut state = State {
+            revision: Some(revision.clone()),
+            ..State::default()
+        };
+        state.on_selection(None);
+        assert_eq!(revision.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn own_selection_does_not_cancel_pending_paste() {
+        let revision = AtomicU64::new(3);
+        let marker = "application/x-kebloop-own";
+        observe_selection(&revision, &offered(&["text/plain", marker]), Some(marker));
+        assert_eq!(revision.load(Ordering::Relaxed), 3);
+        observe_selection(&revision, &offered(&["text/plain"]), Some(marker));
+        assert_eq!(revision.load(Ordering::Relaxed), 4);
     }
 
     #[test]

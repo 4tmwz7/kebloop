@@ -178,7 +178,12 @@ fn leaf_window(
             .get("focused")
             .and_then(Value::as_bool)
             .unwrap_or(false),
-        floating: kind == "floating_con",
+        // i3 wraps floating clients in a `floating_con`, but the client itself is a `con`.
+        floating: kind == "floating_con"
+            || matches!(
+                node.get("floating").and_then(Value::as_str),
+                Some("auto_on" | "user_on")
+            ),
         fullscreen,
         hidden: workspace == Some(SCRATCH_WORKSPACE),
         output: output.filter(|o| *o != "__i3").map(str::to_owned),
@@ -323,9 +328,10 @@ mod tests {
                    "rect": {"x": 960, "y": 30, "width": 960, "height": 1050}}],
                  "floating_nodes": []}],
                "floating_nodes": [
-                {"id": 12, "type": "floating_con", "name": "calc", "app_id": "calculator", "pid": 120,
+                {"id": 1200, "type": "floating_con", "nodes": [
+                {"id": 12, "type": "con", "floating": "user_on", "name": "calc", "app_id": "calculator", "pid": 120,
                  "focused": false, "fullscreen_mode": 0, "nodes": [], "floating_nodes": [],
-                 "rect": {"x": 100, "y": 100, "width": 300, "height": 400}}]}],
+                 "rect": {"x": 100, "y": 100, "width": 300, "height": 400}}]}]}],
              "floating_nodes": []}],
           "floating_nodes": []
         })
@@ -349,6 +355,26 @@ mod tests {
         let hidden = by_id("40");
         assert!(hidden.hidden);
         assert_eq!(hidden.output, None);
+    }
+
+    #[test]
+    fn parses_i3_floating_clients_inside_wrappers() {
+        for state in ["auto_on", "user_on", "auto_off", "user_off"] {
+            let tree = json!({
+                "type": "root", "nodes": [{
+                    "type": if state.ends_with("_on") { "floating_con" } else { "con" },
+                    "id": 20, "nodes": [{
+                        "type": "con", "id": 21, "floating": state,
+                        "window_properties": {"class": "XTerm"},
+                        "rect": {"x": 100, "y": 100, "width": 300, "height": 200}
+                    }]
+                }]
+            });
+            let windows = parse_tree(&tree);
+            assert_eq!(windows.len(), 1);
+            assert_eq!(windows[0].id.0, "21", "use the client, not its wrapper");
+            assert_eq!(windows[0].floating, state.ends_with("_on"), "{state}");
+        }
     }
 
     #[test]
@@ -399,6 +425,28 @@ mod tests {
             .into_iter()
             .filter_map(|l| l.strip_prefix("0 ").map(str::to_owned))
             .collect()
+    }
+
+    #[test]
+    fn restoring_an_i3_floating_client_keeps_it_floating() {
+        use crate::window_management::{WindowAction, WindowManager};
+        use std::sync::Arc;
+
+        let dir = TempDir::new().unwrap();
+        let (sway, log) = server(&dir);
+        let manager = WindowManager::new(Arc::new(sway));
+        let id = WindowId("12".into());
+        manager.perform(WindowAction::LeftHalf, Some(&id)).unwrap();
+        manager.perform(WindowAction::Restore, Some(&id)).unwrap();
+        let commands = commands(&log);
+        assert_eq!(commands.len(), 2);
+        assert!(
+            commands
+                .iter()
+                .all(|command| command.contains("floating enable"))
+        );
+        assert!(commands[1].contains("width 300 px height 400 px"));
+        assert!(commands[1].contains("position 100 px 100 px"));
     }
 
     #[test]

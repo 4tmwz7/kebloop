@@ -82,6 +82,7 @@ pub fn init(ctx: &Rc<AppContext>) {
     let (sender, receiver) = async_channel::bounded::<Started>(1);
     let config = ClipboardConfig {
         recording: ctx.clipboard_recording.clone(),
+        revision: ctx.clipboard_revision.clone(),
         ..ClipboardConfig::default()
     };
     let spawned = std::thread::Builder::new()
@@ -136,10 +137,6 @@ pub fn start_maintenance(ctx: &Rc<AppContext>) {
 }
 
 fn record(ctx: &AppContext, event: ClipboardEvent) {
-    if !event.own_write {
-        // A pending paste notices that somebody else changed the clipboard.
-        ctx.clipboard_revision.fetch_add(1, Ordering::Relaxed);
-    }
     if event.sensitive {
         return;
     }

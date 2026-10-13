@@ -163,6 +163,8 @@ struct ExtensionRun {
     timer: Option<glib::SourceId>,
 }
 
+type ShowCallback = Box<dyn FnOnce(&Launcher)>;
+
 struct Inner {
     ctx: Weak<AppContext>,
     panel: PanelWindow,
@@ -195,6 +197,10 @@ struct Inner {
     previous: RefCell<Option<Window>>,
     /// Counts the openings of the panel, so late answers for an earlier one are ignored.
     revision: Cell<u64>,
+    /// An opening is waiting for the compositor snapshot before taking focus.
+    opening: Cell<bool>,
+    /// Commands that need the panel to have finished opening.
+    after_show: RefCell<Vec<ShowCallback>>,
     /// Cancels a paste that is still waiting for focus when the launcher opens again.
     paste_cancel: RefCell<Arc<AtomicBool>>,
     /// The input method is composing text (non-empty preedit string).
@@ -373,6 +379,8 @@ impl Launcher {
             suppress_changed: Cell::new(0),
             previous: RefCell::new(None),
             revision: Cell::new(0),
+            opening: Cell::new(false),
+            after_show: RefCell::new(Vec::new()),
             paste_cancel: RefCell::new(Arc::new(AtomicBool::new(false))),
             preedit: Cell::new(false),
             confirming: Cell::new(false),
@@ -727,6 +735,10 @@ impl Launcher {
             return;
         }
         let inner = &self.inner;
+        if inner.opening.get() {
+            return;
+        }
+        inner.opening.set(true);
         inner.state.borrow_mut().notice = None;
         inner.state.borrow_mut().mode = Mode::Root;
         inner.revision.set(inner.revision.get().wrapping_add(1));
@@ -745,18 +757,40 @@ impl Launcher {
         // hot-plug, and a disconnected output falls back to the compositor's focused one.
         let output = ctx.with_settings(|s| fixed_output(&s.personalization));
         inner.panel.set_output(output.as_ref());
-        // Ask the compositor which window has focus before the panel takes it.
-        self.begin_session();
         self.show_page();
         self.refresh(false);
         self.update_chrome();
-        inner.panel.present();
+        // Wait for the compositor snapshot before presenting and taking focus.
+        self.begin_session();
+    }
+
+    /// Present after capturing the previous window, unless this opening was cancelled.
+    fn finish_show(&self) {
+        if !self.inner.opening.replace(false) {
+            return;
+        }
+        self.inner.panel.present();
         self.focus_input();
+        let callbacks = self.inner.after_show.take();
+        for callback in callbacks {
+            callback(self);
+        }
+    }
+
+    /// Defer commands that require a visible panel until its focus snapshot completes.
+    fn when_shown(&self, then: impl FnOnce(&Launcher) + 'static) {
+        if self.inner.opening.get() {
+            self.inner.after_show.borrow_mut().push(Box::new(then));
+        } else {
+            then(self);
+        }
     }
 
     /// Hide the launcher.
     pub fn hide(&self) {
         let inner = &self.inner;
+        inner.opening.set(false);
+        inner.after_show.borrow_mut().clear();
         inner.actions.close();
         self.cancel_file_timer();
         self.cancel_extension();
@@ -768,7 +802,7 @@ impl Launcher {
 
     /// Show when hidden, hide when shown.
     pub fn toggle(&self) {
-        if self.is_visible() {
+        if self.is_visible() || self.inner.opening.get() {
             self.hide();
         } else {
             self.show();

@@ -39,14 +39,15 @@ impl Launcher {
     // ----- the session ----------------------------------------------------------------------
 
     /// Ask the compositor (off the main thread) which window has focus and which applications
-    /// have windows. Called just before the panel is presented, while the previous window still
-    /// holds focus.
+    /// have windows. The panel is presented only after the snapshot finishes, so the previous
+    /// window still holds focus when the worker queries the compositor.
     pub(super) fn begin_session(&self) {
         let Some(ctx) = self.ctx() else { return };
         let inner = &self.inner;
         inner.previous.borrow_mut().take();
         let Some(compositor) = ctx.compositor.clone() else {
             ctx.running_apps.borrow_mut().clear();
+            self.finish_show();
             return;
         };
         let identities: Vec<AppIdentity> = ctx.apps.borrow().iter().map(identity_of).collect();
@@ -54,7 +55,7 @@ impl Launcher {
         let own_pid = std::process::id();
         let own_app_id = crate::cli::app_id().to_lowercase();
         let weak = self.downgrade();
-        work::spawn(
+        let spawned = work::spawn(
             "kebloop-windows",
             move || {
                 compositor.windows().map(|windows| {
@@ -73,7 +74,7 @@ impl Launcher {
                 let Some(launcher) = weak.upgrade() else {
                     return;
                 };
-                if launcher.inner.revision.get() != revision {
+                if launcher.inner.revision.get() != revision || !launcher.inner.opening.get() {
                     return;
                 }
                 let Some(ctx) = launcher.ctx() else { return };
@@ -82,8 +83,27 @@ impl Launcher {
                         *launcher.inner.previous.borrow_mut() = focused;
                         let changed = *ctx.running_apps.borrow() != running;
                         *ctx.running_apps.borrow_mut() = running;
-                        if changed && launcher.is_visible() && launcher.mode() == Mode::Root {
+                        if changed && launcher.mode() == Mode::Root {
+                            // Callers may have restored a query, selection or error while the
+                            // snapshot was pending. Updating running badges must retain those.
+                            let selected = launcher.selected_item().map(|item| item.id);
+                            let notice = launcher.inner.state.borrow().notice.clone();
                             launcher.refresh(true);
+                            if let Some(id) = selected {
+                                let position = launcher
+                                    .inner
+                                    .state
+                                    .borrow()
+                                    .items
+                                    .iter()
+                                    .position(|item| item.id == id);
+                                if let Some(position) = position {
+                                    launcher.inner.list.select(position, false);
+                                }
+                            }
+                            if let Some((text, kind)) = notice {
+                                launcher.set_notice(Some(text), kind);
+                            }
                         }
                     }
                     Err(error) => {
@@ -91,8 +111,13 @@ impl Launcher {
                         ctx.running_apps.borrow_mut().clear();
                     }
                 }
+                launcher.finish_show();
             },
         );
+        if !spawned {
+            ctx.running_apps.borrow_mut().clear();
+            self.finish_show();
+        }
     }
 
     /// Stop a paste that is still waiting for the previous window to regain focus.
@@ -166,6 +191,13 @@ impl Launcher {
         label: &str,
         then: impl FnOnce(&Launcher) + 'static,
     ) {
+        if self.inner.opening.get() {
+            let title = title.to_owned();
+            let detail = detail.to_owned();
+            let label = label.to_owned();
+            self.when_shown(move |launcher| launcher.confirm(&title, &detail, &label, then));
+            return;
+        }
         let dialog = adw::AlertDialog::new(Some(title), Some(detail));
         dialog.add_responses(&[("cancel", &tr("Cancel")), ("confirm", label)]);
         dialog.set_response_appearance("confirm", adw::ResponseAppearance::Destructive);
@@ -343,7 +375,7 @@ impl Launcher {
                 || AppIdentity::from_entry(desktop_id, None, ""),
                 identity_of,
             );
-        if self.is_visible() {
+        if self.is_visible() || self.inner.opening.get() {
             self.hide();
         }
         let Some(compositor) = ctx.compositor.clone() else {

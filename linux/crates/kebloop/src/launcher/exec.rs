@@ -493,7 +493,7 @@ impl Launcher {
         {
             let item = super::model::quicklink_item(link, "", &ctx.l10n, &ctx.home);
             self.show();
-            self.perform_item(&item);
+            self.when_shown(move |launcher| launcher.perform_item(&item));
             return;
         }
         if is_user_command_id(id) {
@@ -520,7 +520,9 @@ impl Launcher {
         {
             self.show();
         }
-        self.handle_command(command, &command_result_id(command));
+        self.when_shown(move |launcher| {
+            launcher.handle_command(command, &command_result_id(command));
+        });
     }
 
     /// An application shortcut (CLI `launch`, portal): launch the application, bring it to the
