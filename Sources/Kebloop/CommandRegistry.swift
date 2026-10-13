@@ -5,6 +5,7 @@ import Combine
 // Raw values are persisted identifiers; keep them stable across releases.
 enum LauncherCommand: String, CaseIterable, Identifiable {
     case lock, sleep, restart, logOut, toggleMute, toggleAppearance, leftHalf, rightHalf, maximizeWindow, centerWindow, restoreWindow, nextDisplay, calculationHistory
+    case topHalf, bottomHalf, topLeftQuarter, topRightQuarter, bottomLeftQuarter, bottomRightQuarter, leftThird, centerThird, rightThird, leftTwoThirds, rightTwoThirds, previousDisplay
     case snippets, scripts, extensions, clipboard, quicklinks, emoji, settings, shutdown, browse, help, onboarding, profiles, webSearch, appleShortcuts
     var id: String { rawValue }
     var title: String {
@@ -21,6 +22,18 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .centerWindow: L("Center Window")
         case .restoreWindow: L("Restore Window")
         case .nextDisplay: L("Move to Next Display")
+        case .topHalf: L("Top Half")
+        case .bottomHalf: L("Bottom Half")
+        case .topLeftQuarter: L("Top Left Quarter")
+        case .topRightQuarter: L("Top Right Quarter")
+        case .bottomLeftQuarter: L("Bottom Left Quarter")
+        case .bottomRightQuarter: L("Bottom Right Quarter")
+        case .leftThird: L("Left Third")
+        case .centerThird: L("Center Third")
+        case .rightThird: L("Right Third")
+        case .leftTwoThirds: L("Left Two Thirds")
+        case .rightTwoThirds: L("Right Two Thirds")
+        case .previousDisplay: L("Move to Previous Display")
         case .calculationHistory: L("Calculator History")
 
         case .snippets: L("Snippets")
@@ -53,6 +66,18 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .centerWindow: "rectangle.center.inset.filled"
         case .restoreWindow: "arrow.uturn.backward"
         case .nextDisplay: "display.2"
+        case .topHalf: "rectangle.tophalf.filled"
+        case .bottomHalf: "rectangle.bottomhalf.filled"
+        case .topLeftQuarter: "rectangle.split.2x2"
+        case .topRightQuarter: "rectangle.split.2x2"
+        case .bottomLeftQuarter: "rectangle.split.2x2"
+        case .bottomRightQuarter: "rectangle.split.2x2"
+        case .leftThird: "rectangle.split.3x1"
+        case .centerThird: "rectangle.split.3x1"
+        case .rightThird: "rectangle.split.3x1"
+        case .leftTwoThirds: "rectangle.split.3x1"
+        case .rightTwoThirds: "rectangle.split.3x1"
+        case .previousDisplay: "display.2"
         case .calculationHistory: "clock.arrow.circlepath"
 
         case .snippets: "text.quote"
@@ -85,6 +110,18 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .centerWindow: ["center window", "center", "wyśrodkuj"]
         case .restoreWindow: ["restore window", "restore", "przywróć okno"]
         case .nextDisplay: ["next display", "move display", "następny ekran"]
+        case .topHalf: ["top half", "window top half"]
+        case .bottomHalf: ["bottom half", "window bottom half"]
+        case .topLeftQuarter: ["top left quarter", "window top left quarter"]
+        case .topRightQuarter: ["top right quarter", "window top right quarter"]
+        case .bottomLeftQuarter: ["bottom left quarter", "window bottom left quarter"]
+        case .bottomRightQuarter: ["bottom right quarter", "window bottom right quarter"]
+        case .leftThird: ["left third", "window left third"]
+        case .centerThird: ["center third", "window center third"]
+        case .rightThird: ["right third", "window right third"]
+        case .leftTwoThirds: ["left two thirds", "window left two thirds"]
+        case .rightTwoThirds: ["right two thirds", "window right two thirds"]
+        case .previousDisplay: ["move to previous display", "window move to previous display"]
         case .calculationHistory: ["calculator history", "calculation history", "historia obliczeń"]
 
         case .snippets: ["snippets", "text", "fragmenty", "tekst"]
@@ -122,6 +159,18 @@ enum LauncherCommand: String, CaseIterable, Identifiable {
         case .centerWindow: .center
         case .restoreWindow: .restore
         case .nextDisplay: .nextDisplay
+        case .topHalf: .topHalf
+        case .bottomHalf: .bottomHalf
+        case .topLeftQuarter: .topLeftQuarter
+        case .topRightQuarter: .topRightQuarter
+        case .bottomLeftQuarter: .bottomLeftQuarter
+        case .bottomRightQuarter: .bottomRightQuarter
+        case .leftThird: .leftThird
+        case .centerThird: .centerThird
+        case .rightThird: .rightThird
+        case .leftTwoThirds: .leftTwoThirds
+        case .rightTwoThirds: .rightTwoThirds
+        case .previousDisplay: .previousDisplay
         default: nil
         }
     }

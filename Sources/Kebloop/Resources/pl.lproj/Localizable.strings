@@ -372,3 +372,38 @@
 "Type a keyword followed by a space to expand it. Snippets needing a value without a default stay untouched." = "Wpisz słowo kluczowe i spację, aby je rozwinąć. Fragmenty wymagające wartości bez ustawionej wartości domyślnej pozostają bez zmian.";
 "Unsaved changes may be lost." = "Niezapisane zmiany mogą zostać utracone.";
 "Use {name} for prompted values, {name:friend} for a default, and {date}, {time}, or {clipboard} for local values. Select a snippet in the launcher to preview and copy." = "Użyj {name} dla wartości wymaganej, {name:friend} dla wartości domyślnej oraz {date}, {time} lub {clipboard} dla wartości lokalnych. Wybierz fragment w programie uruchamiającym, aby go podejrzeć i skopiować.";
+
+"Pinned to Favorites" = "Przypięte do ulubionych";
+
+"Window Management" = "Zarządzanie oknami";
+"Arrange windows and configure global keyboard shortcuts." = "Rozmieszczaj okna i konfiguruj globalne skróty klawiaturowe.";
+"Top Half" = "Górna połowa";
+"Bottom Half" = "Dolna połowa";
+"Top Left Quarter" = "Lewa górna ćwiartka";
+"Top Right Quarter" = "Prawa górna ćwiartka";
+"Bottom Left Quarter" = "Lewa dolna ćwiartka";
+"Bottom Right Quarter" = "Prawa dolna ćwiartka";
+"Left Third" = "Lewa jedna trzecia";
+"Center Third" = "Środkowa jedna trzecia";
+"Right Third" = "Prawa jedna trzecia";
+"Left Two Thirds" = "Lewe dwie trzecie";
+"Right Two Thirds" = "Prawe dwie trzecie";
+"Move to Previous Display" = "Przenieś na poprzedni ekran";
+"Halves" = "Połowy";
+"Quarters" = "Ćwiartki";
+"Thirds" = "Trzecie części";
+"Size & Position" = "Rozmiar i położenie";
+"Displays" = "Ekrany";
+"Accessibility access" = "Dostęp do ułatwień dostępu";
+"Enabled" = "Włączony";
+"Required" = "Wymagany";
+"Use Suggested Shortcuts" = "Użyj sugerowanych skrótów";
+"Added %d shortcuts." = "Dodano %d skrótów.";
+"Conflicts skipped:" = "Pominięte konflikty:";
+"Arrange the focused window of your active app with a global shortcut or a launcher command. Windows fit within the display’s usable area, leaving room for the Dock and menu bar." = "Rozmieszczaj aktywne okno aplikacji za pomocą globalnego skrótu lub polecenia launchera. Okna mieszczą się w obszarze roboczym ekranu, zostawiając miejsce na Dock i pasek menu.";
+"Uses Control–Option with arrow keys for halves, U/I/J/K for quarters, D/F/G for thirds, E/T for two thirds, Return to maximize, C to center, and Delete to restore. Add Shift to Left/Right for displays. Existing shortcuts are kept; conflicts are skipped." = "Używa Control–Option ze strzałkami dla połówek, U/I/J/K dla ćwiartek, D/F/G dla trzecich części, E/T dla dwóch trzecich, Return do maksymalizacji, C do wyśrodkowania i Delete do przywrócenia. Dodaj Shift do strzałki w lewo/prawo, aby zmieniać ekran. Istniejące skróty są zachowane, a konflikty pomijane.";
+"Restore returns to the frame saved before the first arrangement. Full-screen, minimized, sheet, and fixed-size windows cannot be arranged. Display actions require more than one display." = "Przywracanie wraca do położenia zapisanego przed pierwszym rozmieszczeniem. Okna pełnoekranowe, zminimalizowane, arkusze i okna o stałym rozmiarze nie mogą być rozmieszczane. Przenoszenie między ekranami wymaga co najmniej dwóch ekranów.";
+
+"Configure window layouts and their keyboard shortcuts." = "Konfiguruj układy okien i ich skróty klawiaturowe.";
+
+"Open profile settings" = "Otwórz ustawienia profili";

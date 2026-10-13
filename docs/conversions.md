@@ -39,12 +39,16 @@ A comma or a period can be used as the decimal mark in conversion input. A comma
 
 ## Date calculations
 
-Use ISO dates when you want an unambiguous date. The calculator supports date differences, date addition, and the relative values `now`, `today`, `tomorrow`, and `yesterday`. Typing `today` alone shows the local date; `now` alone shows the local date and time:
+Use ISO dates when you want an unambiguous date. The calculator supports date differences, date addition, and the relative values `now`, `today`, `tomorrow`, and `yesterday`. Typing `today` alone shows the local date; `now` shows the local date and time to the second. Times use a 24-hour clock:
 
 ```text
 today
 now
 now + 1 day
+3days from now
+3day from today
+in 90min
+today + 45s
 days between 2026-10-12 and 2026-10-20
 date difference between 2026-10-12 and 2026-10-20
 2026-10-12 to 2026-10-20
@@ -52,10 +56,13 @@ today + 10 days
 2026-01-31 + 1 month
 2026-03-07 12:00 + 1 day
 in 3 weeks
+3 days from now
 3 days from today
 ```
 
-Date addition accepts whole numbers of days, weeks, months, or years. Results must fall within Gregorian years 1–9999; overflowing numbers and offsets outside that range report an error instead of returning today. It follows the Gregorian calendar; month addition follows Foundation calendar rules for dates near the end of a month. When a time is supplied, the local clock time is retained where the calendar permits it.
+Date offsets accept compact or spaced amounts and these units: seconds (`second(s)`, `sec(s)`, `s`), minutes (`minute(s)`, `min(s)`, `m`), hours (`hour(s)`, `hr(s)`, `h`), days (`day(s)`, `d`), weeks (`week(s)`, `w`, `wk`), months (`month(s)`, `mo`, `mth`), and years (`year(s)`, `y`, `yr`). Here `m` means minutes; use `mo` or `mth` for months. Offsets work with `now` and `today`, with `x units from now/today`, and with `in xunits`. For example, `now + 2h`, `1day from now`, and `today - 30min` are valid. `today` is local midnight, and sub-day offsets from it show a clock time. `from now` starts at the current instant. `in` keeps calendar-day/week/month/year calculations anchored to today's local midnight and starts second/minute/hour durations at the current instant.
+
+Second, minute, and hour offsets use elapsed time. Day, week, month, and year offsets use Gregorian calendar arithmetic, retaining the local clock time when the starting value is `now` or already includes a time. Month addition follows Foundation calendar rules for dates near the end of a month. Calendar offsets accept whole numbers; fractional amounts are rejected. Results must fall within Gregorian years 1–9999; overflowing numbers and offsets outside that range report an error instead of returning today.
 
 The calculator accepts `YYYY-MM-DD`, local ISO date-times such as `YYYY-MM-DD HH:mm[:ss]`, ISO-8601 timestamps with `Z` or a numeric offset, and the current locale's numeric short-date order with a four-digit year. For example, `01/02/2026` means January 2 in an `en_US` locale and February 1 in an `en_GB` locale. Use `2026-02-01` when the locale interpretation is uncertain.
 

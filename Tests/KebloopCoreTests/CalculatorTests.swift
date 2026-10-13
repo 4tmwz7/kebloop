@@ -100,15 +100,15 @@ final class CalculatorTests: XCTestCase {
         let calculator = CalculatorEngine(locale: Locale(identifier: "en_US"), timeZone: timeZone("UTC"), referenceDate: now)
 
         let tokyo = try result(for: "time in Tokyo", using: calculator)
-        XCTAssertTrue(tokyo.contains("9:00"), tokyo)
+        XCTAssertTrue(tokyo.contains("21:00"), tokyo)
         XCTAssertTrue(tokyo.contains("GMT+09:00"), tokyo)
 
         let london = try result(for: "9:30 AM in New York to London", using: calculator)
-        XCTAssertTrue(london.contains("2:30"), london)
+        XCTAssertTrue(london.contains("14:30"), london)
         XCTAssertTrue(london.contains("GMT+01:00"), london)
 
         let daylightSaving = try result(for: "9 AM PST to CET", using: calculator)
-        XCTAssertTrue(daylightSaving.contains("6:00"), daylightSaving)
+        XCTAssertTrue(daylightSaving.contains("18:00"), daylightSaving)
         XCTAssertTrue(daylightSaving.contains("GMT+02:00"), daylightSaving)
 
         guard case .incomplete = calculator.evaluate("time in") else {
@@ -198,7 +198,7 @@ final class CalculatorTests: XCTestCase {
         let dayAfterDST = try result(for: "2026-03-07 12:00 + 1 day", using: nyCalculator)
         XCTAssertTrue(dayAfterDST.hasPrefix("Mar 8, 2026"))
         XCTAssertTrue(dayAfterDST.contains("12:00"))
-        XCTAssertTrue(dayAfterDST.hasSuffix("PM"))
+        XCTAssertFalse(dayAfterDST.hasSuffix("AM") || dayAfterDST.hasSuffix("PM"))
         XCTAssertEqual(
             try result(for: "days between 2026-03-08T00:00:00-05:00 and 2026-03-09T00:00:00-04:00", using: nyCalculator),
             "1 day"

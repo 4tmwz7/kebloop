@@ -84,8 +84,7 @@ struct TimeZoneCalculationEngine {
         let formatter = DateFormatter()
         formatter.locale = locale
         formatter.timeZone = zone
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
+        formatter.setLocalizedDateFormatFromTemplate("yMMMdHHmm")
         let name = zone.localizedName(for: .generic, locale: locale) ?? zone.identifier
         let offset = zone.secondsFromGMT(for: date)
         let sign = offset >= 0 ? "+" : "−"

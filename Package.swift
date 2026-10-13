@@ -7,7 +7,7 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [.executable(name: "Kebloop", targets: ["Kebloop"])],
     targets: [
-        .target(name: "KebloopCore"),
+        .target(name: "KebloopCore", resources: [.process("Resources")]),
         .executableTarget(name: "Kebloop", dependencies: ["KebloopCore"], resources: [.process("Resources")]),
         .testTarget(name: "KebloopCoreTests", dependencies: ["KebloopCore"]),
         .testTarget(name: "KebloopTests", dependencies: ["Kebloop"])

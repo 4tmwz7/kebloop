@@ -15,8 +15,8 @@ final class RelativeDateTests: XCTestCase {
         XCTAssertEqual(today.clipboard, today.display)
         let now = try result("now", engine: engine)
         XCTAssertTrue(now.display.hasPrefix("Oct 12, 2026"), now.display)
-        XCTAssertTrue(now.display.contains("10:34"), now.display)
-        XCTAssertTrue(now.display.hasSuffix("PM"), now.display)
+        XCTAssertTrue(now.display.contains("22:34"), now.display)
+        XCTAssertFalse(now.display.hasSuffix("AM") || now.display.hasSuffix("PM"), now.display)
         XCTAssertEqual(now.clipboard, now.display)
         XCTAssertEqual(try result("now + 1 day", engine: engine).display, now.display.replacingOccurrences(of: "Oct 12, 2026", with: "Oct 13, 2026"))
         guard case .none = engine.evaluate("today notes") else { return XCTFail("Only exact relative keywords should be calculations") }

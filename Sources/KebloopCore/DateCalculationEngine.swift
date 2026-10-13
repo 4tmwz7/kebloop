@@ -12,7 +12,7 @@ struct DateCalculationEngine {
     func evaluate(_ input: String, now: Date) -> SpecializedCalculation {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         if ["now", "today"].contains(text.lowercased()), let parsed = parseDate(text, now: now) {
-            return .result(format(parsed.date, includesTime: parsed.includesTime))
+            return .result(format(parsed.date, includesTime: parsed.includesTime, includesSeconds: parsed.includesSeconds))
         }
 
         if let range = text.range(of: #"(?i)^date\s+difference\s+between\s+"#, options: .regularExpression) {
@@ -34,7 +34,11 @@ struct DateCalculationEngine {
             return .incomplete
         }
 
-        if let match = firstMatch(of: #"(?i)^(.+?)\s+([+-])\s*([0-9]+(?:[.,][0-9]+)?)\s*(days?|weeks?|months?|years?)\s*$"#, in: text),
+        if let outcome = evaluateRelativeOffset(text, now: now) {
+            return outcome
+        }
+
+        if let match = firstMatch(of: #"(?i)^(.+?)\s+([+-])\s*([0-9]+(?:[.,][0-9]+)?)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|wks?|w|wk|months?|mos?|mths?|mo|mth|years?|yrs?|yr|y)\s*$"#, in: text),
            let dateRange = Range(match.range(at: 1), in: text),
            let operationRange = Range(match.range(at: 2), in: text),
            let amountRange = Range(match.range(at: 3), in: text),
@@ -44,43 +48,99 @@ struct DateCalculationEngine {
             guard let parsed = parseDate(dateText, now: now) else {
                 return .failure("Use a valid date, such as 2026-10-12.")
             }
-            let literal = String(text[amountRange]).replacingOccurrences(of: ",", with: ".")
-            let parts = literal.split(separator: ".", omittingEmptySubsequences: false)
-            guard parts.count == 1 || parts[1].allSatisfy({ $0 == "0" }) else {
-                return .failure("Date additions need a whole number of days, weeks, months, or years.")
+            let literal = String(text[amountRange])
+            guard let amount = parseWholeAmount(literal) else {
+                return .failure(isWholeAmount(literal) ? "That date is outside the supported range." : "Date additions need a whole number of units.")
             }
-            guard let amount = Int(parts[0]) else {
+            guard text[operationRange] != "-" || amount != Int.min else {
                 return .failure("That date is outside the supported range.")
             }
             let amountValue = text[operationRange] == "-" ? -amount : amount
-            let unit = String(text[unitRange]).lowercased().trimmingCharacters(in: .whitespaces)
-            return add(amountValue, unit: unit, to: parsed.date, includesTime: parsed.includesTime)
-        }
-
-        if let match = firstMatch(of: #"(?i)^in\s+([0-9]+)\s+(days?|weeks?|months?|years?)\s*$"#, in: text),
-           let amountRange = Range(match.range(at: 1), in: text),
-           let unitRange = Range(match.range(at: 2), in: text) {
-            guard let amount = Int(text[amountRange]) else {
-                return .failure("That date is outside the supported range.")
-            }
-            let unit = String(text[unitRange]).lowercased()
-            return add(amount, unit: unit, to: calendar.startOfDay(for: now), includesTime: false)
-        }
-
-        if let match = firstMatch(of: #"(?i)^([0-9]+)\s+(days?|weeks?|months?|years?)\s+from\s+today\s*$"#, in: text),
-           let amountRange = Range(match.range(at: 1), in: text),
-           let unitRange = Range(match.range(at: 2), in: text) {
-            guard let amount = Int(text[amountRange]) else {
-                return .failure("That date is outside the supported range.")
-            }
-            let unit = String(text[unitRange]).lowercased()
-            return add(amount, unit: unit, to: calendar.startOfDay(for: now), includesTime: false)
+            guard let unit = DateOffsetUnit(rawValue: String(text[unitRange]).lowercased()) else { return .notHandled }
+            return add(amountValue, unit: unit, to: parsed.date, includesTime: parsed.includesTime, includesSeconds: parsed.includesSeconds)
         }
 
         if hasTrailingDateOperation(text), let operand = dateOperandBeforeTrailingOperation(text), isDateCandidate(operand) {
             return .incomplete
         }
         return .notHandled
+    }
+
+    private func evaluateRelativeOffset(_ text: String, now: Date) -> SpecializedCalculation? {
+        let unitPattern = #"(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|wks?|w|wk|months?|mos?|mths?|mo|mth|years?|yrs?|yr|y)"#
+
+        if let match = firstMatch(of: #"(?i)^(now|today)\s*([+-])\s*([0-9]+(?:[.,][0-9]+)?)\s*"# + unitPattern + #"\s*$"#, in: text),
+           let baseRange = Range(match.range(at: 1), in: text),
+           let operationRange = Range(match.range(at: 2), in: text),
+           let amountRange = Range(match.range(at: 3), in: text),
+           let unitRange = Range(match.range(at: 4), in: text) {
+            let base = String(text[baseRange]).lowercased()
+            let operation = String(text[operationRange])
+            let literal = String(text[amountRange])
+            guard let amount = parseWholeAmount(literal) else {
+                return .failure(isWholeAmount(literal) ? "That date is outside the supported range." : "Date additions need a whole number of units.")
+            }
+            guard let unit = DateOffsetUnit(rawValue: String(text[unitRange]).lowercased()) else { return nil }
+            guard let parsed = parseDate(base, now: now) else {
+                return .failure("That date is outside the supported range.")
+            }
+            guard operation != "-" || amount != Int.min else {
+                return .failure("That date is outside the supported range.")
+            }
+            let signedAmount = operation == "-" ? -amount : amount
+            return add(signedAmount, unit: unit, to: parsed.date, includesTime: parsed.includesTime, includesSeconds: parsed.includesSeconds)
+        }
+
+        if let match = firstMatch(of: #"(?i)^([+-]?[0-9]+(?:[.,][0-9]+)?)\s*"# + unitPattern + #"\s+from\s+(now|today)\s*$"#, in: text),
+           let amountRange = Range(match.range(at: 1), in: text),
+           let unitRange = Range(match.range(at: 2), in: text),
+           let baseRange = Range(match.range(at: 3), in: text) {
+            let literal = String(text[amountRange])
+            guard let amount = parseWholeAmount(literal) else {
+                return .failure(isWholeAmount(literal) ? "That date is outside the supported range." : "Date additions need a whole number of units.")
+            }
+            guard let unit = DateOffsetUnit(rawValue: String(text[unitRange]).lowercased()) else { return nil }
+            let base = String(text[baseRange]).lowercased()
+            guard let parsed = parseDate(base, now: now) else {
+                return .failure("That date is outside the supported range.")
+            }
+            return add(amount, unit: unit, to: parsed.date, includesTime: parsed.includesTime, includesSeconds: parsed.includesSeconds)
+        }
+
+        if let match = firstMatch(of: #"(?i)^in\s+([+-]?[0-9]+(?:[.,][0-9]+)?)\s*"# + unitPattern + #"\s*$"#, in: text),
+           let amountRange = Range(match.range(at: 1), in: text),
+           let unitRange = Range(match.range(at: 2), in: text) {
+            let literal = String(text[amountRange])
+            guard let amount = parseWholeAmount(literal) else {
+                return .failure(isWholeAmount(literal) ? "That date is outside the supported range." : "Date additions need a whole number of units.")
+            }
+            guard let unit = DateOffsetUnit(rawValue: String(text[unitRange]).lowercased()) else { return nil }
+            // Keep existing calendar-date behavior for `in 3 days`; short durations
+            // naturally count forward from the current instant.
+            let isDuration = unit.isDuration
+            let base = isDuration ? now : calendar.startOfDay(for: now)
+            return add(amount, unit: unit, to: base, includesTime: isDuration, includesSeconds: isDuration)
+        }
+
+        if text.range(of: #"(?i)^(?:now|today)\s*[+-]\s*$"#, options: .regularExpression) != nil {
+            return .incomplete
+        }
+        return nil
+    }
+
+    private func parseWholeAmount(_ literal: String) -> Int? {
+        let normalized = literal.replacingOccurrences(of: ",", with: ".")
+        let parts = normalized.split(separator: ".", omittingEmptySubsequences: false)
+        guard isWholeAmount(literal) else { return nil }
+        let integer = String(parts[0])
+        if integer.hasPrefix("+") { return Int(integer.dropFirst()) }
+        return Int(integer)
+    }
+
+    private func isWholeAmount(_ literal: String) -> Bool {
+        let normalized = literal.replacingOccurrences(of: ",", with: ".")
+        let parts = normalized.split(separator: ".", omittingEmptySubsequences: false)
+        return parts.count == 1 || parts[1].allSatisfy({ $0 == "0" })
     }
 
     private func evaluateExplicitDifference(_ text: String, now: Date) -> SpecializedCalculation {
@@ -106,30 +166,43 @@ struct DateCalculationEngine {
         return .result(days == 1 ? "1 day" : "\(days) days")
     }
 
-    private func add(_ amount: Int, unit: String, to date: Date, includesTime: Bool) -> SpecializedCalculation {
-        let component: Calendar.Component
+    private func add(_ amount: Int, unit: DateOffsetUnit, to date: Date, includesTime: Bool, includesSeconds: Bool = false) -> SpecializedCalculation {
+        guard isSupported(date) else { return .failure("That date is outside the supported range.") }
+
+        let result: Date?
         switch unit {
-        case "day", "days": component = .day
-        case "week", "weeks": component = .weekOfYear
-        case "month", "months": component = .month
-        default: component = .year
+        case .second, .minute, .hour:
+            guard let secondsPerUnit = unit.secondsPerUnit else {
+                return .failure("That date is outside the supported range.")
+            }
+            // Bound elapsed-time arithmetic to a wide interval around the supported
+            // Gregorian range before constructing a TimeInterval.
+            let maximumSeconds = 315_537_897_599.0
+            guard abs(Double(amount) * secondsPerUnit) <= maximumSeconds else {
+                return .failure("That date is outside the supported range.")
+            }
+            result = date.addingTimeInterval(Double(amount) * secondsPerUnit)
+        case .day, .week, .month, .year:
+            let component: Calendar.Component
+            let maximumOffset: Int
+            switch unit {
+            case .day: component = .day; maximumOffset = 3_660_000
+            case .week: component = .weekOfYear; maximumOffset = 522_000
+            case .month: component = .month; maximumOffset = 119_988
+            default: component = .year; maximumOffset = 9_999
+            }
+            guard (-maximumOffset...maximumOffset).contains(amount) else {
+                return .failure("That date is outside the supported range.")
+            }
+            result = calendar.date(byAdding: component, value: amount, to: date)
         }
-        // Bound offsets before Foundation calendar arithmetic: extreme values can
-        // silently wrap or return the input date instead of reporting an error.
-        let maximumOffset: Int
-        switch component {
-        case .day: maximumOffset = 3_660_000
-        case .weekOfYear: maximumOffset = 522_000
-        case .month: maximumOffset = 119_988
-        default: maximumOffset = 9_999
-        }
-        guard (-maximumOffset...maximumOffset).contains(amount), isSupported(date),
-              let result = calendar.date(byAdding: component, value: amount, to: date),
-              isSupported(result),
+
+        guard let result, isSupported(result),
               amount == 0 || (amount > 0 ? result > date : result < date) else {
             return .failure("That date is outside the supported range.")
         }
-        return .result(format(result, includesTime: includesTime))
+        let showsTime = includesTime || unit.isDuration
+        return .result(format(result, includesTime: showsTime, includesSeconds: includesSeconds || unit == .second))
     }
 
     private func isSupported(_ date: Date) -> Bool {
@@ -141,7 +214,7 @@ struct DateCalculationEngine {
     private func parseDate(_ rawText: String, now: Date) -> ParsedDate? {
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         switch text.lowercased() {
-        case "now": return isSupported(now) ? ParsedDate(date: now, includesTime: true) : nil
+        case "now": return isSupported(now) ? ParsedDate(date: now, includesTime: true, includesSeconds: true) : nil
         case "today": return ParsedDate(date: calendar.startOfDay(for: now), includesTime: false)
         case "tomorrow":
             guard let date = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)) else { return nil }
@@ -153,7 +226,8 @@ struct DateCalculationEngine {
         }
 
         if text.contains("T"), let date = parseOffsetTimestamp(text) {
-            return ParsedDate(date: date, includesTime: true)
+            let includesSeconds = firstMatch(of: #"[0-9]{2}:[0-9]{2}:[0-9]{2}"#, in: text) != nil
+            return ParsedDate(date: date, includesTime: true, includesSeconds: includesSeconds)
         }
 
         if let match = firstMatch(of: #"^([0-9]{4})-([0-9]{2})-([0-9]{2})(?:[ T]([0-9]{2}):([0-9]{2})(?::([0-9]{2}))?)?$"#, in: text),
@@ -168,7 +242,7 @@ struct DateCalculationEngine {
             let minute = integer(in: text, range: match.range(at: 5)) ?? 0
             let second = integer(in: text, range: match.range(at: 6)) ?? 0
             guard let date = makeDate(year: year, month: month, day: day, hour: hour, minute: minute, second: second) else { return nil }
-            return ParsedDate(date: date, includesTime: includesTime)
+            return ParsedDate(date: date, includesTime: includesTime, includesSeconds: match.range(at: 6).location != NSNotFound)
         }
 
         return parseLocalizedDate(text)
@@ -241,13 +315,15 @@ struct DateCalculationEngine {
         return String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func format(_ date: Date, includesTime: Bool) -> String {
+    private func format(_ date: Date, includesTime: Bool, includesSeconds: Bool = false) -> String {
         let formatter = DateFormatter()
         formatter.locale = locale
         formatter.calendar = calendar
         formatter.timeZone = timeZone
-        formatter.dateStyle = .medium
-        formatter.timeStyle = includesTime ? .short : .none
+        let template = includesTime
+            ? (includesSeconds ? "yMMMdHHmmss" : "yMMMdHHmm")
+            : "yMMMd"
+        formatter.setLocalizedDateFormatFromTemplate(template)
         return formatter.string(from: date)
     }
 
@@ -267,4 +343,44 @@ struct DateCalculationEngine {
 private struct ParsedDate {
     let date: Date
     let includesTime: Bool
+    let includesSeconds: Bool
+
+    init(date: Date, includesTime: Bool, includesSeconds: Bool = false) {
+        self.date = date
+        self.includesTime = includesTime
+        self.includesSeconds = includesSeconds
+    }
+}
+
+private enum DateOffsetUnit: Equatable {
+    case second, minute, hour, day, week, month, year
+
+    init?(rawValue: String) {
+        switch rawValue {
+        case "second", "seconds", "sec", "secs", "s": self = .second
+        case "minute", "minutes", "min", "mins", "m": self = .minute
+        case "hour", "hours", "hr", "hrs", "h": self = .hour
+        case "day", "days", "d": self = .day
+        case "week", "weeks", "w", "wk", "wks": self = .week
+        case "month", "months", "mo", "mos", "mth", "mths": self = .month
+        case "year", "years", "y", "yr", "yrs": self = .year
+        default: return nil
+        }
+    }
+
+    var isDuration: Bool {
+        switch self {
+        case .second, .minute, .hour: return true
+        case .day, .week, .month, .year: return false
+        }
+    }
+
+    var secondsPerUnit: Double? {
+        switch self {
+        case .second: return 1
+        case .minute: return 60
+        case .hour: return 3_600
+        case .day, .week, .month, .year: return nil
+        }
+    }
 }

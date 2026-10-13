@@ -53,62 +53,40 @@ struct SettingsView: View {
     @AccessibilityFocusState private var shortcutButtonFocus: String?
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
-            sidebar
-                .frame(width: 220)
-                .frame(maxHeight: .infinity)
-
-            VStack(alignment: .leading, spacing: 0) {
-                detailHeader
-                    .padding(.horizontal, 24)
-                    .padding(.top, 22)
-                    .padding(.bottom, 16)
-
-                Group {
-                    switch selectedSection {
-                    case .scripts: settingsPage { ScriptCommandsSettingsView(store: scripts) }
-                    case .extensions: settingsPage { ExtensionsSettingsView(store: extensions) }
-                    case .snippets: SnippetSettingsView(store: snippets)
-                    case .general: general
-                    case .search: searchSettings
-                    case .appearance: appearanceSettings
-                    case .quicklinks: links
-                    case .appShortcuts: appShortcuts
-                    case .commandShortcuts: commandShortcutSettings
-                    case .appleShortcuts: appleShortcutSettings
-                    case .profiles: profiles
-                    case .configuration: configurationSettings
-                    case .aliases: appAliases
-                    case .clipboard: clipboardSettings
-                    case .help:
-                        HelpView(
-                            personalization: personalization,
-                            quicklinks: quicklinks,
-                            commandShortcuts: commandShortcuts,
-                            appleShortcuts: appleShortcuts,
-                            appShortcuts: shortcuts,
-                            clipboard: clipboard,
-                            launcherShortcutLabel: preferences.shortcut.label,
-                            onReplayOnboarding: onReplayOnboarding,
-                            onExecute: onExecute
-                        )
-                        .listStyle(.plain)
-                        .scrollContentBackground(.hidden)
+        NavigationSplitView {
+            List(selection: sectionSelection) {
+                ForEach(SettingsSectionGroup.allCases) { group in
+                    Section(group.title) {
+                        ForEach(group.sections) { section in
+                            Label(section.title, systemImage: section.symbol)
+                                .tag(section)
+                        }
                     }
                 }
+            }
+            .listStyle(.sidebar)
+            .navigationTitle(L("Kebloop"))
+            .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
+        } detail: {
+            Group {
+                selectedSettingsPage
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(.background.opacity(0.64), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
+            .navigationTitle(selectedSection.title)
+            .formStyle(.grouped)
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        selectedSection = .profiles
+                    } label: {
+                        Label(configuration.activeProfileName, systemImage: "person.crop.circle")
+                    }
+                    .help(L("Open profile settings"))
+                }
             }
         }
-        .padding(14)
+        .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 820, minHeight: 580)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .groupBoxStyle(SettingsCardStyle())
         .preferredColorScheme(settingsColorScheme)
         .onAppear { siriTrusted = SiriPromptSender.isTrusted }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("KebloopSettingsTab"))) { notification in
@@ -143,162 +121,6 @@ struct SettingsView: View {
         }
     }
 
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 10) {
-                    Image(systemName: "command.square.fill")
-                        .font(.system(size: 24, weight: .medium))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(Color.accentColor)
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(L("Kebloop")).font(.system(size: 16, weight: .semibold))
-                        Text(L("Settings")).font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 0)
-                }
-
-                Button { selectedSection = .profiles } label: {
-                    HStack(spacing: 10) {
-                        ZStack {
-                            Circle().fill(Color.accentColor.opacity(0.12))
-                            Image(systemName: "person.crop.circle.fill")
-                                .font(.system(size: 17))
-                                .foregroundStyle(Color.accentColor)
-                        }
-                        .frame(width: 32, height: 32)
-                        .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(configuration.activeProfileName)
-                                .font(.callout.weight(.medium))
-                                .lineLimit(1)
-                            Text(L("Local profile"))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer(minLength: 0)
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.tertiary)
-                            .accessibilityHidden(true)
-                    }
-                    .padding(10)
-                    .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Active profile: \(configuration.activeProfileName)")
-                .accessibilityHint(L("Opens profile settings."))
-            }
-            .padding(14)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
-            }
-
-            ScrollViewReader { scrollProxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        ForEach(SettingsSectionGroup.allCases) { group in
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(group.title.uppercased())
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .tracking(0.7)
-                                    .foregroundStyle(.tertiary)
-                                    .padding(.leading, 10)
-                                    .padding(.bottom, 2)
-                                ForEach(group.sections) { section in
-                                    sidebarButton(section)
-                                        .id(section.id)
-                                }
-                            }
-                        }
-                    }
-                    .padding(.vertical, 2)
-                }
-                .scrollIndicators(.visible)
-                .onChange(of: selectedSection) { _, section in
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        scrollProxy.scrollTo(section.id, anchor: .center)
-                    }
-                }
-            }
-
-            Spacer(minLength: 0)
-            HStack(spacing: 7) {
-                Image(systemName: "lock.shield")
-                    .accessibilityHidden(true)
-                Text(L("Stored on this Mac"))
-            }
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
-            .padding(.leading, 10)
-        }
-        .padding(12)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.075), lineWidth: 1)
-        }
-    }
-
-    private func sidebarButton(_ section: SettingsSection) -> some View {
-        let selected = selectedSection == section
-        return Button {
-            selectedSection = section
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: section.symbol)
-                    .font(.system(size: 14, weight: selected ? .semibold : .regular))
-                    .frame(width: 19)
-                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
-                    .accessibilityHidden(true)
-                Text(section.title)
-                    .font(.system(size: 13, weight: selected ? .semibold : .regular))
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 34)
-            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .background {
-                if selected {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(Color.accentColor.opacity(0.13))
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(selected ? Color.accentColor : Color.primary.opacity(0.82))
-        .accessibilityLabel(section.title)
-        .accessibilityValue(selected ? "Selected" : "")
-        .accessibilityAddTraits(selected ? .isSelected : [])
-    }
-
-    private var detailHeader: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(selectedSection.title)
-                    .font(.system(size: 23, weight: .semibold))
-                    .tracking(-0.35)
-                Spacer()
-                Text(configuration.activeProfileName)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
-                    .background(Color.primary.opacity(0.045), in: Capsule())
-                    .accessibilityLabel("Profile: \(configuration.activeProfileName)")
-            }
-            Text(selectedSection.subtitle)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .accessibilityElement(children: .contain)
-    }
-
     private var settingsColorScheme: ColorScheme? {
         switch personalization.settings.appearance {
         case "light": .light
@@ -307,20 +129,73 @@ struct SettingsView: View {
         }
     }
 
-    private func settingsPage<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12, content: content)
-                .padding(.horizontal, 22)
-                .padding(.top, 2)
-                .padding(.bottom, 20)
+    private var sectionSelection: Binding<SettingsSection?> {
+        Binding(
+            get: { selectedSection },
+            set: { if let section = $0 { selectedSection = section } }
+        )
+    }
+
+    @ViewBuilder
+    private var selectedSettingsPage: some View {
+        switch selectedSection {
+        case .scripts: scriptsSettings
+        case .extensions: extensionsSettings
+        case .snippets: SnippetSettingsView(store: snippets)
+        case .general: general
+        case .search: searchSettings
+        case .appearance: appearanceSettings
+        case .quicklinks: links
+        case .appShortcuts: appShortcuts
+        case .commandShortcuts: commandShortcutSettings
+        case .windowManagement: WindowManagementSettingsView(store: commandShortcuts)
+        case .appleShortcuts: appleShortcutSettings
+        case .profiles: profiles
+        case .configuration: configurationSettings
+        case .aliases: appAliases
+        case .clipboard: clipboardSettings
+        case .help:
+            HelpView(
+                personalization: personalization,
+                quicklinks: quicklinks,
+                commandShortcuts: commandShortcuts,
+                appleShortcuts: appleShortcuts,
+                appShortcuts: shortcuts,
+                clipboard: clipboard,
+                launcherShortcutLabel: preferences.shortcut.label,
+                onReplayOnboarding: onReplayOnboarding,
+                onExecute: onExecute
+            )
         }
-        .scrollIndicators(.visible)
+    }
+
+    private var scriptsSettings: some View {
+        Form {
+            Section(L("Script Commands")) {
+                ScriptCommandsSettingsView(store: scripts)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var extensionsSettings: some View {
+        Form {
+            Section(L("Extensions")) {
+                ExtensionsSettingsView(store: extensions)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func settingsPage<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        Form(content: content)
+            .formStyle(.grouped)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var general: some View {
         settingsPage {
-            GroupBox(L("Launcher")) {
+            Section(L("Launcher")) {
                 VStack(alignment: .leading, spacing: 12) {
                 Picker(L("Open launcher"), selection: $preferences.shortcutID) {
                     ForEach(Shortcut.choices) { Text($0.label).tag($0.id) }
@@ -348,7 +223,7 @@ struct SettingsView: View {
                 }
             }
 
-            GroupBox(L("AI handoff")) {
+            Section(L("AI handoff")) {
                 VStack(alignment: .leading, spacing: 10) {
                 Picker(L("AI provider"), selection: $ai.provider) {
                     ForEach(AIProvider.allCases) { provider in Text(provider.settingsTitle).tag(provider) }
@@ -369,7 +244,7 @@ struct SettingsView: View {
                 }
                 }
             }
-            GroupBox(L("Applications")) {
+            Section(L("Applications")) {
                 VStack(alignment: .leading, spacing: 10) {
                 Button(L("Refresh Applications")) { index.refresh() }.disabled(index.isRefreshing)
                 Button(L("Welcome and Help")) { onReplayOnboarding() }
@@ -380,9 +255,8 @@ struct SettingsView: View {
     }
 
     private var searchSettings: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                GroupBox(L("Search categories")) {
+        Form {
+                Section(L("Search categories")) {
                     VStack(alignment: .leading, spacing: 8) {
                         Toggle(L("Applications"), isOn: $personalization.settings.appsEnabled)
                         Toggle(L("Files and folders"), isOn: $personalization.settings.filesEnabled)
@@ -391,7 +265,7 @@ struct SettingsView: View {
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 4)
                 }
 
-                GroupBox(L("Searchable folders")) {
+                Section(L("Searchable folders")) {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(L("File results are limited to these folders. You can select more than one."))
                             .font(.caption).foregroundStyle(.secondary)
@@ -411,7 +285,7 @@ struct SettingsView: View {
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 4)
                 }
 
-                GroupBox(L("Exclude paths")) {
+                Section(L("Exclude paths")) {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(L("Excluded folders stay out of search even when they sit inside a searchable folder."))
                             .font(.caption).foregroundStyle(.secondary)
@@ -422,7 +296,6 @@ struct SettingsView: View {
                         }
                         HStack(spacing: 8) {
                             TextField(L("/path/to/exclude or ~/Folder"), text: $pathDraft)
-                                .textFieldStyle(.roundedBorder)
                                 .onSubmit(addExclusion)
                             Button(L("Add")) { addExclusion() }
                                 .disabled(pathDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -433,7 +306,7 @@ struct SettingsView: View {
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 4)
                 }
 
-                GroupBox(L("Hidden applications")) {
+                Section(L("Hidden applications")) {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(L("Hide selected apps from launcher results. This does not remove app shortcuts or aliases."))
                             .font(.caption).foregroundStyle(.secondary)
@@ -447,7 +320,7 @@ struct SettingsView: View {
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 4)
                 }
 
-                GroupBox(L("Empty launcher")) {
+                Section(L("Empty launcher")) {
                     Picker(L("Show when search is empty"), selection: $personalization.settings.emptyMode) {
                         Text(L("Frequent apps")).tag("frequent")
                         Text(L("Recent apps")).tag("recent")
@@ -457,7 +330,7 @@ struct SettingsView: View {
                     .accessibilityLabel(L("Empty launcher results"))
                 }
 
-                GroupBox(L("Pinned favorites")) {
+                Section(L("Pinned favorites")) {
                     VStack(alignment: .leading, spacing: 8) {
                         if personalization.pins.isEmpty {
                             Text(L("Pin supported results with ⌘K in the launcher. Favorites appear here and can be shown when search is empty."))
@@ -483,22 +356,20 @@ struct SettingsView: View {
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 4)
                 }
 
-                HStack {
+                Section {
+                    HStack {
                     Spacer()
                     Button(L("Reset Search Settings…"), role: .destructive) { resetSearchConfirmation = true }
+                    }
                 }
-            }
-            .padding(.horizontal, 22)
-            .padding(.top, 2)
-            .padding(.bottom, 20)
         }
-        .scrollIndicators(.visible)
+        .formStyle(.grouped)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var appearanceSettings: some View {
         settingsPage {
-            GroupBox(L("Appearance")) {
+            Section(L("Appearance")) {
                 VStack(alignment: .leading, spacing: 12) {
                 Picker(L("Color scheme"), selection: $personalization.settings.appearance) {
                     Text(L("System")).tag("system")
@@ -523,7 +394,7 @@ struct SettingsView: View {
                 }
             }
 
-            GroupBox(L("Panel placement")) {
+            Section(L("Panel placement")) {
                 VStack(alignment: .leading, spacing: 10) {
                 Picker(L("Place launcher on"), selection: $personalization.settings.placement) {
                     Text(L("Pointer display")).tag("pointer")
@@ -542,7 +413,7 @@ struct SettingsView: View {
                 }
                 }
             }
-            GroupBox {
+            Section {
                 Button(L("Reset Appearance to Defaults")) { resetAppearanceSettings() }
             }
         }
@@ -550,7 +421,7 @@ struct SettingsView: View {
 
     private var links: some View {
         settingsPage {
-            GroupBox(L("Quicklinks")) {
+            Section(L("Quicklinks")) {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(L("Open websites, files, and folders by name. A keyword can also run a link with an argument, such as “gh kebloop”."))
                         .font(.callout).foregroundStyle(.secondary)
@@ -586,9 +457,9 @@ struct SettingsView: View {
                     Divider()
                     Text(editingID == nil ? "Add a quicklink" : "Edit quicklink")
                         .font(.subheadline.weight(.semibold))
-                    TextField(L("Name"), text: $linkName).textFieldStyle(.roundedBorder)
-                    TextField(L("Keyword (optional)"), text: $linkKeyword).textFieldStyle(.roundedBorder)
-                    TextField(L("Website URL, file path, or folder path"), text: $linkTarget).textFieldStyle(.roundedBorder)
+                    TextField(L("Name"), text: $linkName)
+                    TextField(L("Keyword (optional)"), text: $linkKeyword)
+                    TextField(L("Website URL, file path, or folder path"), text: $linkTarget)
                     if !linkTarget.isEmpty, linkTarget.contains("{query}") {
                         Text("Preview: \(Quicklink.destination(linkTarget, argument: "A space & tea")?.absoluteString ?? "This template is invalid.")")
                             .font(.caption).foregroundStyle(.secondary).lineLimit(2).textSelection(.enabled)
@@ -606,7 +477,7 @@ struct SettingsView: View {
                 }
             }
 
-            GroupBox(L("Web search templates")) {
+            Section(L("Web search templates")) {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(L("Use {query} where the encoded search text should go. For example, type “web cats” in the launcher."))
                         .font(.callout).foregroundStyle(.secondary)
@@ -641,9 +512,9 @@ struct SettingsView: View {
                     Divider()
                     Text(editingWebSearchID == nil ? "Add a web search" : "Edit web search")
                         .font(.subheadline.weight(.semibold))
-                    TextField(L("Name"), text: $webSearchName).textFieldStyle(.roundedBorder)
-                    TextField(L("Keyword"), text: $webSearchKeyword).textFieldStyle(.roundedBorder)
-                    TextField(L("https://example.com/?q={query}"), text: $webSearchTarget).textFieldStyle(.roundedBorder)
+                    TextField(L("Name"), text: $webSearchName)
+                    TextField(L("Keyword"), text: $webSearchKeyword)
+                    TextField(L("https://example.com/?q={query}"), text: $webSearchTarget)
                     if !webSearchTarget.isEmpty {
                         let preview = WebSearchTemplate(id: "preview", name: webSearchName, keyword: webSearchKeyword, target: webSearchTarget).resolvedURL(argument: "Warsaw cafés & tea")
                         Text("Preview: \(preview?.absoluteString ?? "Use a valid HTTP or HTTPS URL with {query}.")")
@@ -664,9 +535,9 @@ struct SettingsView: View {
 
     private var appShortcuts: some View {
         settingsPage {
-            GroupBox(L("Application shortcuts")) {
+            Section(L("Application shortcuts")) {
                 VStack(alignment: .leading, spacing: 12) {
-                    TextField(L("Search applications"), text: $appQuery).textFieldStyle(.roundedBorder)
+                    TextField(L("Search applications"), text: $appQuery)
                         .accessibilityLabel(L("Search applications for shortcuts"))
                     Text(L("Open an app from anywhere with Command, Option, or Control plus a key."))
                         .font(.callout).foregroundStyle(.secondary)
@@ -716,7 +587,7 @@ struct SettingsView: View {
 
     private var commandShortcutSettings: some View {
         settingsPage {
-            GroupBox(L("Command shortcuts")) {
+            Section(L("Command shortcuts")) {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(L("Assign a global shortcut to a built-in command, quicklink, or selected Apple Shortcut. The same recorder and conflict checks apply to apps and commands."))
                         .font(.callout).foregroundStyle(.secondary)
@@ -764,7 +635,7 @@ struct SettingsView: View {
 
     private var appleShortcutSettings: some View {
         settingsPage {
-            GroupBox(L("Available Apple Shortcuts")) {
+            Section(L("Available Apple Shortcuts")) {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(alignment: .top) {
                         Text(L("Choose shortcuts to make available as launcher commands. macOS may ask permission when you run one."))
@@ -804,12 +675,11 @@ struct SettingsView: View {
                 }
             }
             if !appleShortcuts.selected.isEmpty {
-                GroupBox(L("Selected shortcuts")) {
+                Section(L("Selected shortcuts")) {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(L("Optional text input is passed to the selected shortcut when you run it here."))
                             .font(.callout).foregroundStyle(.secondary)
                         TextField(L("Optional text input"), text: $appleShortcutInput)
-                            .textFieldStyle(.roundedBorder)
                             .accessibilityLabel(L("Optional text input for Apple Shortcuts"))
                         ForEach(appleShortcuts.selected) { shortcut in
                             HStack(spacing: 10) {
@@ -842,7 +712,7 @@ struct SettingsView: View {
 
     private var profiles: some View {
         settingsPage {
-            GroupBox(L("Profiles")) {
+            Section(L("Profiles")) {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(L("Profiles keep links, aliases, shortcuts, pins, and search and appearance preferences together. Launch at login and clipboard privacy stay global."))
                         .font(.callout).foregroundStyle(.secondary)
@@ -851,7 +721,6 @@ struct SettingsView: View {
                             VStack(alignment: .leading, spacing: 9) {
                                 HStack(spacing: 8) {
                                     TextField(L("Profile name"), text: profileNameBinding(profile))
-                                        .textFieldStyle(.roundedBorder)
                                         .onSubmit { renameProfile(profile) }
                                     if profile.id == configuration.activeProfileID {
                                         Label(L("Active"), systemImage: "checkmark.circle.fill")
@@ -886,7 +755,7 @@ struct SettingsView: View {
                     Divider()
                     Text(L("Create a profile")).font(.subheadline.weight(.semibold))
                     HStack(spacing: 8) {
-                        TextField(L("New profile name"), text: $newProfileName).textFieldStyle(.roundedBorder)
+                        TextField(L("New profile name"), text: $newProfileName)
                         Button(L("Create Profile")) {
                             performProfileAction { _ = try configuration.createProfile(name: newProfileName); newProfileName = "" }
                         }
@@ -902,7 +771,7 @@ struct SettingsView: View {
 
     private var configurationSettings: some View {
         settingsPage {
-            GroupBox(L("Configuration")) {
+            Section(L("Configuration")) {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(L("Export aliases, quicklinks, shortcuts, pins, search and appearance settings, and profiles. Clipboard contents, credentials, caches, and usage history are not included."))
                         .font(.callout).foregroundStyle(.secondary)
@@ -915,7 +784,7 @@ struct SettingsView: View {
                 }
             }
             if let preview = pendingPreview {
-                GroupBox(L("Import preview")) {
+                Section(L("Import preview")) {
                     VStack(alignment: .leading, spacing: 10) {
                         ForEach(preview.summary, id: \.self) { summary in Label(summary, systemImage: "checkmark.circle").font(.callout) }
                         if !preview.warnings.isEmpty {
@@ -939,7 +808,7 @@ struct SettingsView: View {
 
     private var clipboardSettings: some View {
         settingsPage {
-            GroupBox(L("Clipboard history")) {
+            Section(L("Clipboard history")) {
                 VStack(alignment: .leading, spacing: 12) {
                     Toggle(L("Enable clipboard history"), isOn: $clipboard.enabled)
                     Text(L("Copied text is stored locally on this Mac. Disable history to stop collecting new items."))
@@ -981,9 +850,9 @@ struct SettingsView: View {
 
     private var appAliases: some View {
         settingsPage {
-            GroupBox(L("Application aliases")) {
+            Section(L("Application aliases")) {
                 VStack(alignment: .leading, spacing: 12) {
-                    TextField(L("Search applications"), text: $appQuery).textFieldStyle(.roundedBorder)
+                    TextField(L("Search applications"), text: $appQuery)
                         .accessibilityLabel(L("Search applications for aliases"))
                     Text(L("Give an app a name to search for, such as “terminal” for Ghostty."))
                         .font(.callout).foregroundStyle(.secondary)
@@ -1194,8 +1063,6 @@ struct SettingsView: View {
                 Button(L("Cancel"), action: cancel)
             }
         }
-        .padding(10)
-        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
     }
 
     private func openAccessibilitySettings() {
@@ -1278,7 +1145,7 @@ struct SettingsView: View {
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
-    case scripts, extensions, snippets, general, search, appearance, quicklinks, appShortcuts, commandShortcuts, appleShortcuts, profiles, configuration, aliases, clipboard, help
+    case scripts, extensions, snippets, general, search, appearance, windowManagement, quicklinks, appShortcuts, commandShortcuts, appleShortcuts, profiles, configuration, aliases, clipboard, help
 
     var id: String { rawValue }
     var title: String {
@@ -1289,6 +1156,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         case .general: L("General")
         case .search: L("Search")
         case .appearance: L("Appearance")
+        case .windowManagement: L("Window Management")
         case .quicklinks: L("Quicklinks")
         case .appShortcuts: L("App Shortcuts")
         case .commandShortcuts: L("Command Shortcuts")
@@ -1308,6 +1176,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         case .general: "gearshape"
         case .search: "magnifyingglass"
         case .appearance: "paintbrush"
+        case .windowManagement: "rectangle.split.2x2"
         case .quicklinks: "link"
         case .appShortcuts: "command"
         case .commandShortcuts: "keyboard"
@@ -1328,6 +1197,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         case .general: L("Set your launcher shortcut, startup behavior, and AI handoff.")
         case .search: L("Choose what Kebloop searches and manage indexed locations.")
         case .appearance: L("Adjust the launcher’s look, size, and display placement.")
+        case .windowManagement: L("Configure window layouts and their keyboard shortcuts.")
         case .quicklinks: L("Manage saved links and keyword-based web searches.")
         case .appShortcuts: L("Assign global shortcuts to your applications.")
         case .commandShortcuts: L("Assign global shortcuts to commands and saved actions.")
@@ -1355,7 +1225,7 @@ private enum SettingsSectionGroup: String, CaseIterable, Identifiable {
     }
     var sections: [SettingsSection] {
         switch self {
-        case .preferences: [.general, .search, .appearance]
+        case .preferences: [.general, .search, .appearance, .windowManagement]
         case .shortcuts: [.appShortcuts, .commandShortcuts, .appleShortcuts]
         case .personalization: [.quicklinks, .snippets, .scripts, .extensions, .aliases, .profiles]
         case .data: [.configuration, .clipboard, .help]
@@ -1400,7 +1270,6 @@ private struct AppAliasRow: View {
             }
             Spacer()
             TextField(L("Alias"), text: $draft)
-                .textFieldStyle(.roundedBorder)
                 .frame(width: 180)
                 .accessibilityLabel("Alias for \(app.name)")
                 .onSubmit(save)

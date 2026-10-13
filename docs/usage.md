@@ -126,9 +126,13 @@ Running apps show a Running label. Their action menu offers Hide, Quit, Force Qu
 
 Type Lock Screen, Sleep, Restart, Log Out, Toggle Mute, or Toggle Appearance. Restart and log out use macOS confirmation; shutdown keeps its existing confirmation. Lock requires Accessibility. Sleep and system appearance may require macOS Automation access to System Events. Command shortcuts can be assigned to each action. Actions report failures rather than claiming success.
 
-## Basic window management
+## Window management
 
-Type Left Half, Right Half, Maximize Window, Center Window, Restore Window, or Move to Next Display, or assign them global command shortcuts. These commands arrange the focused window of the app active before Kebloop opened. Accessibility permission is required on use. Full-screen, minimized, modal-sheet, and fixed-size windows are skipped. Positions use the display's usable bounds, excluding the Dock/menu bar. Restore returns to the frame saved before the first arrangement; moving between displays clamps the window to the destination. A second display is required for Move to Next Display.
+Use launcher commands for left/right/top/bottom halves, four corner quarters, left/center/right thirds, left/right two thirds, maximize, center, restore, and previous/next display. Launcher commands arrange the focused window of the app active before Kebloop opened; global window shortcuts act directly on the active app.
+
+Open **Settings → Window Management** to record or remove each global keybinding. **Use Suggested Shortcuts** fills unassigned actions with Control–Option shortcuts: arrows for halves, U/I/J/K for quarters, D/F/G for thirds, E/T for two thirds, Return to maximize, C to center, Delete to restore, and Shift–Left/Right for displays. Existing bindings are preserved and conflicts with the launcher, apps, other commands, or macOS are skipped and reported. These bindings also appear in Command Shortcuts and are saved with your configuration.
+
+Accessibility permission is required on use; the settings page shows its status and links to System Settings. Full-screen, minimized, modal-sheet, and fixed-size windows are skipped. Positions use the display's usable bounds, excluding the Dock/menu bar. Restore returns to the frame saved before the first arrangement; moving between displays clamps the window to the destination. Display switching requires at least two displays.
 
 ## Calculator history and snippet defaults
 

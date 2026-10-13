@@ -271,9 +271,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 940, height: 680), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
             window.title = L("Kebloop Settings")
             window.contentMinSize = NSSize(width: 820, height: 580)
-            window.titleVisibility = .hidden
-            window.titlebarAppearsTransparent = true
-            window.titlebarSeparatorStyle = .none
             window.isReleasedWhenClosed = false
             window.delegate = self
             window.contentView = NSHostingView(rootView: SettingsView(preferences: preferences, index: index, quicklinks: quicklinks, shortcuts: shortcuts, aliases: aliases, clipboard: clipboard, ai: ai, personalization: personalization, configuration: configuration, commandShortcuts: commandShortcuts, appleShortcuts: appleShortcuts, snippets: snippets, scripts: scripts, extensions: extensions, onReplayOnboarding: { [weak self] in self?.showHelp(onboarding: true) }, onExecute: { [weak self] id in

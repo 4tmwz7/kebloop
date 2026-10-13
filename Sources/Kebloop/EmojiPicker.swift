@@ -10,25 +10,32 @@ private final class EmojiPickerPanel: NSPanel {
 @MainActor
 private final class EmojiPickerModel: ObservableObject {
     @Published var query = "" {
-        didSet { selection = 0 }
+        didSet {
+            selection = 0
+            refreshResults()
+        }
     }
     @Published var selectedCategory = "All" {
-        didSet { selection = 0 }
+        didSet {
+            selection = 0
+            refreshResults()
+        }
     }
     @Published private(set) var recentSymbols: [String] = []
     @Published private(set) var selection = 0
+    @Published private(set) var results: [EmojiEntry] = []
 
     let categories = ["All", "Smileys", "People", "Animals", "Nature", "Food", "Travel", "Places", "Activities", "Objects", "Symbols", "Flags"]
     private let recentsKey = "emojiPicker.recent"
 
     init() {
         recentSymbols = Array((UserDefaults.standard.stringArray(forKey: recentsKey) ?? []).prefix(24))
+        refreshResults()
     }
 
-    var results: [EmojiEntry] {
+    private func refreshResults() {
         let matches = EmojiCatalog.search(query)
-        guard selectedCategory != "All" else { return matches }
-        return matches.filter { $0.category == selectedCategory }
+        results = selectedCategory == "All" ? matches : matches.filter { $0.category == selectedCategory }
     }
 
     var selectedEntry: EmojiEntry? {
@@ -37,7 +44,7 @@ private final class EmojiPickerModel: ObservableObject {
     }
 
     var recentEntries: [EmojiEntry] {
-        recentSymbols.compactMap { symbol in EmojiCatalog.entries.first { $0.symbol == symbol } }
+        recentSymbols.compactMap(EmojiCatalog.entry(forSymbol:))
     }
 
     func moveSelection(by delta: Int) {
@@ -65,7 +72,7 @@ private struct EmojiPickerView: View {
     @FocusState private var searchFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private let columns = Array(repeating: GridItem(.fixed(42), spacing: 4), count: 8)
+    private let columns = Array(repeating: GridItem(.flexible(minimum: 32), spacing: 4), count: 8)
 
     private var groups: [(String, [EmojiEntry])] {
         let categoryOrder = Array(model.categories.dropFirst())
@@ -206,7 +213,8 @@ private struct EmojiPickerView: View {
         } label: {
             Text(entry.symbol)
                 .font(.system(size: 23))
-                .frame(width: 42, height: 42)
+                .frame(maxWidth: .infinity)
+                .frame(height: 42)
                 .background(isSelected ? Color.accentColor.opacity(0.20) : Color.clear, in: RoundedRectangle(cornerRadius: 9))
                 .contentShape(RoundedRectangle(cornerRadius: 9))
         }

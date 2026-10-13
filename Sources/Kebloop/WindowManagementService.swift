@@ -3,7 +3,12 @@ import ApplicationServices
 
 @MainActor
 final class WindowManagementService {
-    enum Action: CaseIterable { case leftHalf, rightHalf, maximize, center, restore, nextDisplay }
+    enum Action: CaseIterable {
+        case leftHalf, rightHalf, topHalf, bottomHalf
+        case topLeftQuarter, topRightQuarter, bottomLeftQuarter, bottomRightQuarter
+        case leftThird, centerThird, rightThird, leftTwoThirds, rightTwoThirds
+        case maximize, center, restore, previousDisplay, nextDisplay
+    }
     enum Failure: LocalizedError {
         case permission, noWindow, unsupported, noRestore, noOtherDisplay, accessibility(AXError)
         var errorDescription: String? {
@@ -49,9 +54,11 @@ final class WindowManagementService {
             let saved = savedFrames[savedIndex].frame
             let targetIndex = Self.screenIndex(for: saved, screens: bounds) ?? currentIndex
             destination = Self.clamp(saved, to: bounds[targetIndex])
-        } else if action == .nextDisplay {
+        } else if action == .nextDisplay || action == .previousDisplay {
             guard bounds.count > 1 else { throw Failure.noOtherDisplay }
-            destination = Self.move(original, from: bounds[currentIndex], to: bounds[(currentIndex + 1) % bounds.count])
+            let offset = action == .nextDisplay ? 1 : -1
+            let destinationIndex = (currentIndex + offset + bounds.count) % bounds.count
+            destination = Self.move(original, from: bounds[currentIndex], to: bounds[destinationIndex])
         } else { destination = Self.arrangedFrame(action, original: original, screen: bounds[currentIndex]) }
         if savedIndex == nil && action != .restore {
             if savedFrames.count >= maximumSavedFrames { savedFrames.removeFirst() }
@@ -73,14 +80,27 @@ final class WindowManagementService {
         }
     }
     static func arrangedFrame(_ action: Action, original: CGRect, screen: CGRect) -> CGRect {
+        let thirdX = screen.minX + screen.width / 3
+        let twoThirdsX = screen.minX + screen.width * 2 / 3
         switch action {
         case .leftHalf: return CGRect(x: screen.minX, y: screen.minY, width: screen.width / 2, height: screen.height)
         case .rightHalf: return CGRect(x: screen.midX, y: screen.minY, width: screen.width / 2, height: screen.height)
+        case .topHalf: return CGRect(x: screen.minX, y: screen.minY, width: screen.width, height: screen.height / 2)
+        case .bottomHalf: return CGRect(x: screen.minX, y: screen.midY, width: screen.width, height: screen.height / 2)
+        case .topLeftQuarter: return CGRect(x: screen.minX, y: screen.minY, width: screen.width / 2, height: screen.height / 2)
+        case .topRightQuarter: return CGRect(x: screen.midX, y: screen.minY, width: screen.width / 2, height: screen.height / 2)
+        case .bottomLeftQuarter: return CGRect(x: screen.minX, y: screen.midY, width: screen.width / 2, height: screen.height / 2)
+        case .bottomRightQuarter: return CGRect(x: screen.midX, y: screen.midY, width: screen.width / 2, height: screen.height / 2)
+        case .leftThird: return CGRect(x: screen.minX, y: screen.minY, width: thirdX - screen.minX, height: screen.height)
+        case .centerThird: return CGRect(x: thirdX, y: screen.minY, width: twoThirdsX - thirdX, height: screen.height)
+        case .rightThird: return CGRect(x: twoThirdsX, y: screen.minY, width: screen.maxX - twoThirdsX, height: screen.height)
+        case .leftTwoThirds: return CGRect(x: screen.minX, y: screen.minY, width: twoThirdsX - screen.minX, height: screen.height)
+        case .rightTwoThirds: return CGRect(x: thirdX, y: screen.minY, width: screen.maxX - thirdX, height: screen.height)
         case .maximize: return screen
         case .center:
             let size = CGSize(width: min(original.width, screen.width), height: min(original.height, screen.height))
             return CGRect(x: screen.midX - size.width / 2, y: screen.midY - size.height / 2, width: size.width, height: size.height)
-        case .restore, .nextDisplay: return clamp(original, to: screen)
+        case .restore, .previousDisplay, .nextDisplay: return clamp(original, to: screen)
         }
     }
     static func clamp(_ frame: CGRect, to screen: CGRect) -> CGRect {

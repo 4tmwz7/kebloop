@@ -18,7 +18,7 @@ public struct EmojiEntry: Identifiable, Hashable, Sendable {
 
 /// A compact, offline catalogue for the launcher’s emoji picker.
 public enum EmojiCatalog {
-    public static let entries: [EmojiEntry] = [
+    private static let curatedEntries: [EmojiEntry] = [
         // Smileys and people
         e("😀", "grinning face", "Smileys", "happy smile grin"), e("😃", "grinning face with big eyes", "Smileys", "happy smile"),
         e("😄", "grinning face with smiling eyes", "Smileys", "happy smile laugh"), e("😁", "beaming face", "Smileys", "happy grin"),
@@ -405,6 +405,18 @@ public enum EmojiCatalog {
         e("🇹🇷", "flag turkey", "Flags", "turkish"), e("🇮🇸", "flag iceland", "Flags", "icelandic")
     ]
 
+    /// All fully-qualified RGI emoji from Unicode's bundled dataset, with curated aliases retained.
+    public static let entries: [EmojiEntry] = makeEntries()
+
+    /// Unicode version used by the bundled catalog.
+    public static let unicodeVersion = "18.0"
+    private static let curatedSymbols = Set(curatedEntries.map(\.symbol))
+    private static let entriesBySymbol = Dictionary(uniqueKeysWithValues: entries.map { ($0.symbol, $0) })
+
+    public static func entry(forSymbol symbol: String) -> EmojiEntry? {
+        entriesBySymbol[symbol]
+    }
+
     /// Search by emoji name, category, or common aliases. Results are stable and most relevant first.
     public static func search(_ query: String) -> [EmojiEntry] {
         let rawQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -415,7 +427,7 @@ public enum EmojiCatalog {
         }
         let queryWords = normalizedQuery.split(separator: " ").map(String.init)
 
-        return entries.compactMap { entry -> (EmojiEntry, Int)? in
+        return entries.enumerated().compactMap { index, entry -> (EmojiEntry, Int, Int)? in
             let name = normalize(entry.name)
             let keywords = normalize(entry.keywords.joined(separator: " "))
             let category = normalize(entry.category)
@@ -432,14 +444,84 @@ public enum EmojiCatalog {
             else if keywords.contains(normalizedQuery) { score = 600 }
             else if queryWords.allSatisfy({ haystack.contains($0) }) { score = 500 }
             else { return nil }
-            return (entry, score)
+            let curatedAdjustment = curatedSymbols.contains(entry.symbol) ? 2 : 0
+            return (entry, score + curatedAdjustment, index)
         }
         .sorted { left, right in
             if left.1 != right.1 { return left.1 > right.1 }
             if left.0.category != right.0.category { return left.0.category < right.0.category }
-            return left.0.name < right.0.name
+            if left.0.name != right.0.name { return left.0.name < right.0.name }
+            return left.2 < right.2
         }
         .map(\.0)
+    }
+
+    private static func makeEntries() -> [EmojiEntry] {
+        let officialEntries = loadOfficialEntries()
+        let officialBySymbol = Dictionary(uniqueKeysWithValues: officialEntries.map { ($0.symbol, $0) })
+        let curatedSymbols = Set(curatedEntries.map(\.symbol))
+
+        // Keep the hand-tuned display names, aliases, and initial ordering for familiar emoji.
+        // Unicode's groups remain the source of truth for category placement.
+        let curated = curatedEntries.map { entry in
+            EmojiEntry(
+                symbol: entry.symbol,
+                name: entry.name,
+                category: officialBySymbol[entry.symbol]?.category ?? entry.category,
+                keywords: entry.keywords
+            )
+        }
+        let additions = officialEntries.filter { !curatedSymbols.contains($0.symbol) }
+        return curated + additions
+    }
+
+    private static func loadOfficialEntries() -> [EmojiEntry] {
+        guard let url = Bundle.module.url(forResource: "emoji-test", withExtension: "txt"),
+              let contents = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+
+        var group = ""
+        var subgroup = ""
+        var parsedEntries: [EmojiEntry] = []
+        for line in contents.split(whereSeparator: \.isNewline) {
+            if line.hasPrefix("# group: ") {
+                group = String(line.dropFirst("# group: ".count))
+                continue
+            }
+            if line.hasPrefix("# subgroup: ") {
+                subgroup = String(line.dropFirst("# subgroup: ".count))
+                continue
+            }
+            guard !line.hasPrefix("#"), let commentIndex = line.firstIndex(of: "#") else { continue }
+            let data = line[..<commentIndex].split(separator: ";", omittingEmptySubsequences: false)
+            guard data.count == 2, data[1].trimmingCharacters(in: .whitespaces) == "fully-qualified" else { continue }
+            let codePoints = data[0].split(whereSeparator: \.isWhitespace)
+            let scalars = codePoints.compactMap { UInt32($0, radix: 16).flatMap(UnicodeScalar.init) }
+            guard scalars.count == codePoints.count, !scalars.isEmpty else { continue }
+            let symbol = String(String.UnicodeScalarView(scalars))
+            let comment = line[line.index(after: commentIndex)...].split(whereSeparator: \.isWhitespace)
+            guard comment.count >= 3 else { continue }
+            let name = comment.dropFirst(2).joined(separator: " ")
+            guard let category = category(for: group, subgroup: subgroup) else { continue }
+            parsedEntries.append(EmojiEntry(symbol: symbol, name: name, category: category))
+        }
+        return parsedEntries
+    }
+
+    private static func category(for group: String, subgroup: String) -> String? {
+        switch group {
+        case "Smileys & Emotion": return "Smileys"
+        case "People & Body": return "People"
+        case "Animals & Nature": return subgroup.hasPrefix("animal-") ? "Animals" : "Nature"
+        case "Food & Drink": return "Food"
+        case "Travel & Places":
+            if subgroup.hasPrefix("place-") || subgroup == "hotel" { return "Places" }
+            return subgroup == "sky & weather" ? "Nature" : "Travel"
+        case "Activities": return "Activities"
+        case "Objects": return "Objects"
+        case "Symbols": return "Symbols"
+        case "Flags": return "Flags"
+        default: return nil
+        }
     }
 
     private static func e(_ symbol: String, _ name: String, _ category: String, _ keywords: String = "") -> EmojiEntry {

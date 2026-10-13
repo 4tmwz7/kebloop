@@ -371,3 +371,38 @@
 "Type a keyword followed by a space to expand it. Snippets needing a value without a default stay untouched." = "Type a keyword followed by a space to expand it. Snippets needing a value without a default stay untouched.";
 "Unsaved changes may be lost." = "Unsaved changes may be lost.";
 "Use {name} for prompted values, {name:friend} for a default, and {date}, {time}, or {clipboard} for local values. Select a snippet in the launcher to preview and copy." = "Use {name} for prompted values, {name:friend} for a default, and {date}, {time}, or {clipboard} for local values. Select a snippet in the launcher to preview and copy.";
+
+"Pinned to Favorites" = "Pinned to Favorites";
+
+"Window Management" = "Window Management";
+"Arrange windows and configure global keyboard shortcuts." = "Arrange windows and configure global keyboard shortcuts.";
+"Top Half" = "Top Half";
+"Bottom Half" = "Bottom Half";
+"Top Left Quarter" = "Top Left Quarter";
+"Top Right Quarter" = "Top Right Quarter";
+"Bottom Left Quarter" = "Bottom Left Quarter";
+"Bottom Right Quarter" = "Bottom Right Quarter";
+"Left Third" = "Left Third";
+"Center Third" = "Center Third";
+"Right Third" = "Right Third";
+"Left Two Thirds" = "Left Two Thirds";
+"Right Two Thirds" = "Right Two Thirds";
+"Move to Previous Display" = "Move to Previous Display";
+"Halves" = "Halves";
+"Quarters" = "Quarters";
+"Thirds" = "Thirds";
+"Size & Position" = "Size & Position";
+"Displays" = "Displays";
+"Accessibility access" = "Accessibility access";
+"Enabled" = "Enabled";
+"Required" = "Required";
+"Use Suggested Shortcuts" = "Use Suggested Shortcuts";
+"Added %d shortcuts." = "Added %d shortcuts.";
+"Conflicts skipped:" = "Conflicts skipped:";
+"Arrange the focused window of your active app with a global shortcut or a launcher command. Windows fit within the display’s usable area, leaving room for the Dock and menu bar." = "Arrange the focused window of your active app with a global shortcut or a launcher command. Windows fit within the display’s usable area, leaving room for the Dock and menu bar.";
+"Uses Control–Option with arrow keys for halves, U/I/J/K for quarters, D/F/G for thirds, E/T for two thirds, Return to maximize, C to center, and Delete to restore. Add Shift to Left/Right for displays. Existing shortcuts are kept; conflicts are skipped." = "Uses Control–Option with arrow keys for halves, U/I/J/K for quarters, D/F/G for thirds, E/T for two thirds, Return to maximize, C to center, and Delete to restore. Add Shift to Left/Right for displays. Existing shortcuts are kept; conflicts are skipped.";
+"Restore returns to the frame saved before the first arrangement. Full-screen, minimized, sheet, and fixed-size windows cannot be arranged. Display actions require more than one display." = "Restore returns to the frame saved before the first arrangement. Full-screen, minimized, sheet, and fixed-size windows cannot be arranged. Display actions require more than one display.";
+
+"Configure window layouts and their keyboard shortcuts." = "Configure window layouts and their keyboard shortcuts.";
+
+"Open profile settings" = "Open profile settings";

@@ -18,7 +18,7 @@ Open apps, find files, run calculations, and reach your clipboard, quicklinks, a
 - **Emoji picker** with search, categories, and recents.
 - **App controls** with running indicators, hide, quit, confirmed force quit, restart, and focus/hide app shortcuts.
 - **System actions** for shutdown, lock, sleep, restart, log out, mute, and appearance.
-- **Window management** for halves, maximize, center, restore, and moving to the next display.
+- **Window management** for halves, quarters, thirds, two thirds, maximize, center, restore, and moving between displays, with a dedicated shortcut settings page.
 - **Snippets** with prompted/default values, date/time/clipboard variables, and optional local keyword expansion.
 - **AI handoff** to ChatGPT, Claude, or Siri using your existing apps and accounts.
 - **Native appearance** with Liquid Glass on macOS 26+ and popover material on older releases.

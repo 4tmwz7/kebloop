@@ -767,6 +767,25 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
             button.selectionHint = hint
             button.showsHint = personalization.settings.showShortcutHints
             for view in [image, titleLabel, subtitleLabel, hint] { view.translatesAutoresizingMaskIntoConstraints = false; button.addSubview(view) }
+            let isFavorite = personalization.isPinned(id: result.id)
+            var titleTrailingAnchor = hint.leadingAnchor
+            if isFavorite {
+                let pinImage = NSImageView()
+                pinImage.identifier = NSUserInterfaceItemIdentifier("favorite-pin")
+                pinImage.image = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: nil)
+                pinImage.contentTintColor = .secondaryLabelColor
+                pinImage.toolTip = L("Pinned to Favorites")
+                pinImage.setAccessibilityElement(false)
+                pinImage.translatesAutoresizingMaskIntoConstraints = false
+                button.addSubview(pinImage)
+                NSLayoutConstraint.activate([
+                    pinImage.widthAnchor.constraint(equalToConstant: 12),
+                    pinImage.heightAnchor.constraint(equalToConstant: 12),
+                    pinImage.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+                    pinImage.trailingAnchor.constraint(equalTo: hint.leadingAnchor, constant: -12)
+                ])
+                titleTrailingAnchor = pinImage.leadingAnchor
+            }
             NSLayoutConstraint.activate([
                 button.heightAnchor.constraint(equalToConstant: rowHeight),
                 image.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 10),
@@ -774,10 +793,10 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
                 image.widthAnchor.constraint(equalToConstant: 28), image.heightAnchor.constraint(equalToConstant: 28),
                 titleLabel.leadingAnchor.constraint(equalTo: image.trailingAnchor, constant: 10),
                 titleLabel.topAnchor.constraint(equalTo: button.topAnchor, constant: 6),
-                titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: hint.leadingAnchor, constant: -12),
+                titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: titleTrailingAnchor, constant: -12),
                 subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
                 subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 1),
-                subtitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: hint.leadingAnchor, constant: -12),
+                subtitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: titleTrailingAnchor, constant: -12),
                 hint.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: isClipboardResult(result) ? -40 : -10),
                 hint.centerYAnchor.constraint(equalTo: button.centerYAnchor)
             ])
@@ -798,7 +817,7 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
                     remove.heightAnchor.constraint(equalToConstant: 28)
                 ])
             }
-            button.setAccessibilityLabel("\(title), \(subtitle), \(action)")
+            button.setAccessibilityLabel("\(title), \(subtitle), \(action)" + (isFavorite ? ", " + L("Pinned to Favorites") : ""))
             button.setSelected(position == selection)
             button.contextInvoke = { [weak self] in
                 guard let self, let position = self.results.firstIndex(where: { $0.id == result.id }) else { return }
@@ -876,6 +895,22 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
             show(); results = [.quicklink(link)]; selection = 0; performSelected(); return
         }
         guard let command = LauncherCommand(rawValue: id.replacingOccurrences(of: "command:", with: "")) else { return }
+        if let action = command.windowAction {
+            let frontmost = NSWorkspace.shared.frontmostApplication
+            let target = frontmost?.processIdentifier == ProcessInfo.processInfo.processIdentifier ? previousApp : frontmost
+            do {
+                try windowManagement.perform(action, application: target)
+                if panel.isVisible { dismiss(restoreFocus: false) }
+                target?.activate(options: [])
+            } catch {
+                show()
+                results = [.command(command)]
+                selection = 0
+                message = error.localizedDescription
+                render()
+            }
+            return
+        }
         show(); results = [.command(command)]; selection = 0; performSelected()
     }
 
@@ -1190,7 +1225,7 @@ final class LauncherPanelController: NSObject, NSTextFieldDelegate, NSWindowDele
             case .settings: onSettings?()
             case .webSearch: enter(.webSearch)
             case .browse, .help, .onboarding, .profiles, .appleShortcuts: onCommand?(command)
-            case .lock, .sleep, .restart, .logOut, .toggleMute, .toggleAppearance, .leftHalf, .rightHalf, .maximizeWindow, .centerWindow, .restoreWindow, .nextDisplay: break
+            case .lock, .sleep, .restart, .logOut, .toggleMute, .toggleAppearance, .leftHalf, .rightHalf, .maximizeWindow, .centerWindow, .restoreWindow, .nextDisplay, .topHalf, .bottomHalf, .topLeftQuarter, .topRightQuarter, .bottomLeftQuarter, .bottomRightQuarter, .leftThird, .centerThird, .rightThird, .leftTwoThirds, .rightTwoThirds, .previousDisplay: break
             case .shutdown:
                 do {
                     try ShutdownService.requestConfirmation()

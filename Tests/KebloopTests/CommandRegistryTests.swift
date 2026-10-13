@@ -83,3 +83,37 @@ extension CommandRegistryTests {
         store.remove(id: "emoji")
     }
 }
+
+extension CommandRegistryTests {
+    @MainActor
+    func testWindowPresetCoversEveryActionWithUniqueShortcuts() {
+        let bindings = WindowShortcutPreset.bindings
+        let windowCommands = LauncherCommand.allCases.filter { $0.windowAction != nil }
+        XCTAssertEqual(Set(bindings.map(\.id)), Set(windowCommands.map(\.id)))
+        XCTAssertEqual(bindings.count, WindowManagementService.Action.allCases.count)
+        XCTAssertEqual(Set(bindings.map { "\($0.keyCode):\($0.modifiers)" }).count, bindings.count)
+        XCTAssertTrue(bindings.allSatisfy { $0.modifiers & UInt32(controlKey | optionKey) == UInt32(controlKey | optionKey) })
+    }
+
+    @MainActor
+    func testWindowShortcutsPersistAndRejectConflictingAppBinding() throws {
+        let suite = "WindowShortcuts.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let hotkey = HotkeyService()
+        let store = CommandShortcutStore(hotkey: hotkey, defaults: defaults)
+        defer { store.unregisterAll() }
+        let key = UInt32(kVK_F19), modifiers = UInt32(controlKey | optionKey | cmdKey | shiftKey)
+        XCTAssertTrue(hotkey.registerBinding(id: "test-app", keyCode: key, modifiers: modifiers) {})
+        defer { hotkey.unregisterBinding(id: "test-app") }
+        store.suspend()
+        XCTAssertFalse(store.assign(commandID: LauncherCommand.topLeftQuarter.id, keyCode: key, modifiers: modifiers, label: "Conflict"))
+        XCTAssertTrue(store.bindings.isEmpty)
+        hotkey.unregisterBinding(id: "test-app")
+        XCTAssertTrue(store.assign(commandID: LauncherCommand.topLeftQuarter.id, keyCode: key, modifiers: modifiers, label: "Test shortcut"))
+        store.resume()
+        store.reload()
+        XCTAssertEqual(store.bindings.first?.id, LauncherCommand.topLeftQuarter.id)
+        XCTAssertEqual(store.bindings.first?.label, "Test shortcut")
+    }
+}
