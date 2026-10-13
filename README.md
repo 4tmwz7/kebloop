@@ -106,3 +106,7 @@ swift test -c release
 Milestones 3–4 add clipboard retention/privacy/pins and image/rich-text history, reusable snippets, unit/date calculations, English/Polish UI resources, reviewed local script commands, and a versioned subprocess extension API. See [usage](docs/usage.md), [conversion syntax](docs/conversions.md), [automation examples/API](docs/automation.md), and [validation status](docs/roadmap.md).
 
 See the [feature-by-feature verification report](docs/feature-verification.md) for test coverage and remaining native UI checks.
+
+## License
+
+Kebloop is released under the [MIT License](LICENSE). The bundled Unicode emoji data is covered by the [Unicode License](Sources/KebloopCore/Resources/unicode-license.txt).
