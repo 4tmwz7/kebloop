@@ -66,6 +66,10 @@ KEBLOOP_SIGNING_IDENTITY="Apple Development: Your Name (TEAMID)" ./scripts/insta
 
 These are local development builds, not notarized distribution releases. A stable development signature helps macOS retain Siri automation permissions across rebuilds; ad-hoc builds may require granting them again.
 
+## Linux
+
+A native Linux port (Rust, GTK4, libadwaita, Wayland-first) lives in [`linux/`](linux/README.md) on the `linux-rust` branch. It covers app, file, calculator, clipboard, quicklink, snippet, and emoji search, and is bound to a compositor key with `kebloop toggle`. See the [Linux guide](linux/README.md) for requirements, installation, and shortcut setup.
+
 ## Getting started
 
 | Action | Shortcut |
